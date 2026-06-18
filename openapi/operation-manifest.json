@@ -1,5 +1,6 @@
 {
   "version": "1.1.1",
+  "schema_sha256": "cb4a2428e064b92b64dc15f5bf8c8dec4098a363b4fb32b418fe6073bfc0092c",
   "operations": [
     "GET /api/v1/accounts",
     "GET /api/v1/buying-power",
@@ -22,5 +23,28 @@
     "POST /api/v1/orders/{orderId}/cancel",
     "POST /api/v1/orders/{orderId}/modify",
     "POST /oauth2/token"
+  ],
+  "operation_ids": [
+    "cancelOrder",
+    "createOrder",
+    "getAccounts",
+    "getBuyingPower",
+    "getCandles",
+    "getCommissions",
+    "getExchangeRate",
+    "getHoldings",
+    "getKrMarketCalendar",
+    "getOrder",
+    "getOrderbook",
+    "getOrders",
+    "getPriceLimit",
+    "getPrices",
+    "getSellableQuantity",
+    "getStockWarnings",
+    "getStocks",
+    "getTrades",
+    "getUsMarketCalendar",
+    "issueOAuth2Token",
+    "modifyOrder"
   ]
 }

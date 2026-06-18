@@ -20,6 +20,7 @@ optional guarded trading tools to MCP clients such as Hermes Agent.
 - Trading tools hidden by default
 - Two-step, expiring, one-time confirmations for create, modify, and cancel operations
 - Configurable KRW/USD limits and a hard block on orders worth KRW 100 million or more
+- Conservative KR market-order checks using the official upper price limit
 - Streamable HTTP MCP transport with Bearer authentication and Origin validation
 - Hardened Docker Compose deployment
 - Hermes Agent configuration and a safety-focused Hermes skill
@@ -53,6 +54,16 @@ Copy the relevant section from
 hermes mcp test tossinvest
 ```
 
+Install the bundled Hermes skill:
+
+```bash
+mkdir -p ~/.hermes/skills/tossinvest
+cp skills/tossinvest/SKILL.md ~/.hermes/skills/tossinvest/SKILL.md
+hermes skills list | grep tossinvest
+```
+
+Start a new Hermes session after installing the skill.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
@@ -66,8 +77,9 @@ hermes mcp test tossinvest
 | `TOSSINVEST_BASE_URL` | no | official API | Override only for tests or compatible proxies |
 | `MCP_AUTH_TOKEN` | yes | — | Bearer token required by the MCP endpoint |
 | `MCP_ALLOWED_ORIGINS` | no | empty | Comma-separated browser origins; absent Origin is allowed |
-| `MCP_HOST` | no | `0.0.0.0` | Container listen address |
-| `MCP_PORT` | no | `8000` | Container listen port |
+| `MCP_HOST` | no | `0.0.0.0` | Listen address for direct, non-Compose runs |
+| `MCP_PORT` | no | `8000` | Listen port for direct, non-Compose runs |
+| `MCP_PUBLISHED_PORT` | no | `8000` | Host port published by Docker Compose |
 | `LOG_LEVEL` | no | `INFO` | Server log level |
 
 Keep `.env` private. Never commit credentials, account identifiers, access tokens, or production
@@ -83,6 +95,9 @@ Read-only tools:
 - `list_accounts`, `get_holdings`
 - `list_orders`, `get_order`
 - `get_buying_power`, `get_sellable_quantity`, `get_commissions`
+
+`list_accounts` deliberately removes raw account numbers and account sequence values. It returns
+only the account type and whether that account matches the server's configured account.
 
 When `TOSSINVEST_ENABLE_TRADING=true`, the server additionally registers:
 

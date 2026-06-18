@@ -5,8 +5,11 @@ services:
     image: ghcr.io/cha2hyun/tossinvest-mcp:latest
     env_file:
       - ${ENV_FILE:-.env}
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
     ports:
-      - "127.0.0.1:${MCP_PORT:-8000}:8000"
+      - "127.0.0.1:${MCP_PUBLISHED_PORT:-8000}:8000"
     init: true
     restart: unless-stopped
     read_only: true

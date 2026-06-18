@@ -20,6 +20,7 @@
 - 기본적으로 주문 도구를 등록하지 않는 조회 전용 모드
 - 생성·정정·취소의 2단계 미리보기와 2분짜리 일회용 확인
 - KRW/USD 주문 한도와 1억원 이상 주문의 강제 차단
+- 국내 시장가 주문을 공식 상한가 기준으로 보수적으로 검사
 - Bearer 인증 및 Origin 검사가 적용된 Streamable HTTP MCP
 - 보안 설정을 적용한 Docker Compose
 - Hermes Agent 설정 예제와 거래 안전 Skill
@@ -53,6 +54,16 @@ MCP 주소는 `http://127.0.0.1:8000/mcp`입니다.
 hermes mcp test tossinvest
 ```
 
+함께 제공되는 Hermes Skill을 설치합니다.
+
+```bash
+mkdir -p ~/.hermes/skills/tossinvest
+cp skills/tossinvest/SKILL.md ~/.hermes/skills/tossinvest/SKILL.md
+hermes skills list | grep tossinvest
+```
+
+Skill 설치 후에는 새 Hermes 세션을 시작하세요.
+
 ## 환경변수
 
 | 변수 | 필수 조건 | 기본값 | 설명 |
@@ -65,6 +76,9 @@ hermes mcp test tossinvest
 | `TOSSINVEST_MAX_ORDER_USD` | 주문 활성화 | — | 달러 주문 최대 금액 |
 | `MCP_AUTH_TOKEN` | 항상 | — | MCP 연결용 Bearer 토큰 |
 | `MCP_ALLOWED_ORIGINS` | 선택 | 빈 값 | 허용할 브라우저 Origin 목록 |
+| `MCP_HOST` | 선택 | `0.0.0.0` | Compose 외 직접 실행 시 listen 주소 |
+| `MCP_PORT` | 선택 | `8000` | Compose 외 직접 실행 시 listen 포트 |
+| `MCP_PUBLISHED_PORT` | 선택 | `8000` | Docker Compose가 호스트에 공개할 포트 |
 | `LOG_LEVEL` | 선택 | `INFO` | 서버 로그 레벨 |
 
 `.env`는 절대 커밋하지 마세요. 인증 정보, 계좌번호, access token, 실제 API 응답도 저장소에
@@ -80,6 +94,9 @@ hermes mcp test tossinvest
 - `list_accounts`, `get_holdings`
 - `list_orders`, `get_order`
 - `get_buying_power`, `get_sellable_quantity`, `get_commissions`
+
+`list_accounts`는 원본 계좌번호와 account sequence를 제거하고 계좌 유형 및 서버에 설정된
+계좌인지 여부만 반환합니다.
 
 `TOSSINVEST_ENABLE_TRADING=true`일 때만 다음 도구가 추가됩니다.
 

@@ -1,0 +1,86 @@
+{
+  "issueOAuth2Token": {
+    "kind": "internal",
+    "implementation": "TossInvestClient._get_access_token"
+  },
+  "getOrderbook": {
+    "kind": "tool",
+    "tools": ["get_orderbook"]
+  },
+  "getPrices": {
+    "kind": "tool",
+    "tools": ["get_prices"]
+  },
+  "getTrades": {
+    "kind": "tool",
+    "tools": ["get_recent_trades"]
+  },
+  "getPriceLimit": {
+    "kind": "tool",
+    "tools": ["get_price_limits"]
+  },
+  "getCandles": {
+    "kind": "tool",
+    "tools": ["get_candles"]
+  },
+  "getStocks": {
+    "kind": "tool",
+    "tools": ["get_stock_info"]
+  },
+  "getStockWarnings": {
+    "kind": "tool",
+    "tools": ["get_stock_warnings"]
+  },
+  "getExchangeRate": {
+    "kind": "tool",
+    "tools": ["get_exchange_rate"]
+  },
+  "getKrMarketCalendar": {
+    "kind": "tool",
+    "tools": ["get_market_calendar"]
+  },
+  "getUsMarketCalendar": {
+    "kind": "tool",
+    "tools": ["get_market_calendar"]
+  },
+  "getAccounts": {
+    "kind": "tool",
+    "tools": ["list_accounts"]
+  },
+  "getHoldings": {
+    "kind": "tool",
+    "tools": ["get_holdings"]
+  },
+  "getOrders": {
+    "kind": "tool",
+    "tools": ["list_orders"]
+  },
+  "createOrder": {
+    "kind": "tool",
+    "tools": ["preview_order", "place_order"]
+  },
+  "getOrder": {
+    "kind": "tool",
+    "tools": ["get_order"]
+  },
+  "modifyOrder": {
+    "kind": "tool",
+    "tools": ["preview_order_modification", "modify_order"]
+  },
+  "cancelOrder": {
+    "kind": "tool",
+    "tools": ["preview_order_cancellation", "cancel_order"]
+  },
+  "getBuyingPower": {
+    "kind": "tool",
+    "tools": ["get_buying_power"]
+  },
+  "getSellableQuantity": {
+    "kind": "tool",
+    "tools": ["get_sellable_quantity"]
+  },
+  "getCommissions": {
+    "kind": "tool",
+    "tools": ["get_commissions"]
+  }
+}

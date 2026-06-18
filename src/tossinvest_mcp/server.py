@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
+from datetime import date as Date
+from datetime import datetime as DateTime
 from typing import Annotated, Any, Literal
 
 import uvicorn
@@ -127,28 +129,47 @@ def create_mcp(
         symbol: Symbol,
         interval: Literal["1m", "1d"],
         count: Annotated[int, Field(ge=1, le=200)] = 100,
-        before: str | None = None,
+        before: DateTime | None = None,
         adjusted: bool = True,
     ) -> dict[str, Any]:
         """Return minute or daily OHLCV candles."""
-        return await tool_call(service.get_candles(symbol, interval, count, before, adjusted))
+        return await tool_call(
+            service.get_candles(
+                symbol,
+                interval,
+                count,
+                before.isoformat() if before is not None else None,
+                adjusted,
+            )
+        )
 
     @mcp.tool(tags={"market", "read"})
     async def get_exchange_rate(
         base_currency: Literal["KRW", "USD"],
         quote_currency: Literal["KRW", "USD"],
-        date_time: str | None = None,
+        date_time: DateTime | None = None,
     ) -> dict[str, Any]:
         """Return the KRW/USD exchange rate, optionally at a specific ISO 8601 time."""
-        return await tool_call(service.get_exchange_rate(base_currency, quote_currency, date_time))
+        return await tool_call(
+            service.get_exchange_rate(
+                base_currency,
+                quote_currency,
+                date_time.isoformat() if date_time is not None else None,
+            )
+        )
 
     @mcp.tool(tags={"market", "read"})
     async def get_market_calendar(
         market: Literal["KR", "US"],
-        date: str | None = None,
+        date: Date | None = None,
     ) -> dict[str, Any]:
         """Return Korean or US market sessions for a date."""
-        return await tool_call(service.get_market_calendar(market, date))
+        return await tool_call(
+            service.get_market_calendar(
+                market,
+                date.isoformat() if date is not None else None,
+            )
+        )
 
     @mcp.tool(tags={"account", "read"})
     async def list_accounts() -> dict[str, Any]:
@@ -164,8 +185,8 @@ def create_mcp(
     async def list_orders(
         status: Literal["OPEN", "CLOSED"],
         symbol: Symbol | None = None,
-        from_date: str | None = None,
-        to_date: str | None = None,
+        from_date: Date | None = None,
+        to_date: Date | None = None,
         cursor: str | None = None,
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
     ) -> dict[str, Any]:
@@ -174,8 +195,8 @@ def create_mcp(
             service.list_orders(
                 status,
                 symbol,
-                from_date,
-                to_date,
+                from_date.isoformat() if from_date is not None else None,
+                to_date.isoformat() if to_date is not None else None,
                 cursor,
                 limit,
             )

@@ -15,6 +15,7 @@ reproduction details.
 - Keep `TOSSINVEST_ENABLE_TRADING=false` unless live trading is intentionally required.
 - Start with low KRW/USD order limits and review every preview.
 - Never automatically retry a write that returns `order-state-unknown`.
+- Write requests are never automatically retried, including after an expired-token response.
 - Treat `/readyz` as operational data and do not expose it unnecessarily.
 
 Only the latest released minor version receives security fixes.

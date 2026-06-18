@@ -36,7 +36,7 @@ class TossInvestService:
             "GET",
             "/api/v1/stocks",
             group="STOCK",
-            params={"symbols": symbols},
+            params={"symbols": self._validated_symbols(symbols)},
         )
 
     async def get_stock_warnings(self, symbol: str) -> dict[str, Any]:
@@ -51,7 +51,7 @@ class TossInvestService:
             "GET",
             "/api/v1/prices",
             group="MARKET_DATA",
-            params={"symbols": symbols},
+            params={"symbols": self._validated_symbols(symbols)},
         )
 
     async def get_orderbook(self, symbol: str) -> dict[str, Any]:
@@ -125,7 +125,24 @@ class TossInvestService:
         )
 
     async def list_accounts(self) -> dict[str, Any]:
-        return await self.client.request("GET", "/api/v1/accounts", group="ACCOUNT")
+        response = await self.client.request("GET", "/api/v1/accounts", group="ACCOUNT")
+        accounts = response.get("data")
+        if not isinstance(accounts, list):
+            raise TossInvestError(
+                "The upstream account response was malformed",
+                code="invalid-upstream-response",
+            )
+        selected_seq = self.settings.tossinvest_account_seq
+        response["data"] = [
+            {
+                "account_type": account.get("accountType"),
+                "selected": selected_seq is not None
+                and str(account.get("accountSeq")) == selected_seq,
+            }
+            for account in accounts
+            if isinstance(account, dict)
+        ]
+        return response
 
     async def get_holdings(self, symbol: str | None = None) -> dict[str, Any]:
         return await self.client.request(
@@ -203,6 +220,16 @@ class TossInvestService:
         currency = cast(Literal["KRW", "USD"], stock.get("currency"))
         if currency not in {"KRW", "USD"}:
             raise TossInvestError("Unsupported stock currency", code="unsupported-currency")
+        if request.order_amount is not None and currency != "USD":
+            raise TossInvestError(
+                "Amount-based orders are supported only for US stocks",
+                code="amount-order-market-not-supported",
+            )
+        if request.time_in_force == "CLS" and currency != "USD":
+            raise TossInvestError(
+                "CLS orders are supported only for US stocks",
+                code="time-in-force-market-not-supported",
+            )
 
         market: Market = "KR" if currency == "KRW" else "US"
         warnings = await self.get_stock_warnings(request.symbol)
@@ -214,7 +241,49 @@ class TossInvestService:
         )
 
         market_price = Decimal(str(price["lastPrice"]))
-        estimated_amount = request.estimated_amount(market_price)
+        estimate_price = market_price
+        price_limit_data: dict[str, Any] | None = None
+        if currency == "KRW" and request.order_type == "MARKET":
+            price_limits = await self.get_price_limits(request.symbol)
+            price_limit_data = self._mapping_data(price_limits, "price limit")
+            upper_limit = price_limit_data.get("upperLimitPrice")
+            if upper_limit is None:
+                raise TossInvestError(
+                    "A Korean market order cannot be safely estimated without an upper price limit",
+                    code="market-order-limit-unavailable",
+                )
+            estimate_price = Decimal(str(upper_limit))
+
+        estimated_amount = request.estimated_amount(estimate_price)
+        availability_data = self._mapping_data(availability, "order availability")
+        if request.side == "BUY":
+            buying_power = Decimal(str(availability_data["cashBuyingPower"]))
+            if estimated_amount > buying_power:
+                raise TossInvestError(
+                    "Estimated order amount exceeds current cash buying power",
+                    code="insufficient-buying-power-preview",
+                    data={
+                        "estimated": str(estimated_amount),
+                        "buying_power": str(buying_power),
+                        "currency": currency,
+                    },
+                )
+        else:
+            sellable = Decimal(str(availability_data["sellableQuantity"]))
+            estimated_quantity = (
+                Decimal(request.quantity)
+                if request.quantity is not None
+                else Decimal(str(request.order_amount)) / market_price
+            )
+            if estimated_quantity > sellable:
+                raise TossInvestError(
+                    "Estimated sell quantity exceeds the currently sellable quantity",
+                    code="insufficient-sellable-quantity-preview",
+                    data={
+                        "estimated_quantity": str(estimated_quantity),
+                        "sellable_quantity": str(sellable),
+                    },
+                )
         estimated_krw = await self._enforce_order_limits(currency, estimated_amount)
         client_order_id = uuid.uuid4().hex
         api_payload = request.to_api_payload(client_order_id)
@@ -229,8 +298,9 @@ class TossInvestService:
                 "stock": stock,
                 "warnings": warnings["data"],
                 "current_price": price,
+                "price_limits": price_limit_data,
                 "market_calendar": calendar["data"],
-                "availability": availability["data"],
+                "availability": availability_data,
                 "estimated_amount": str(estimated_amount),
                 "currency": currency,
                 "estimated_krw": str(estimated_krw),
@@ -259,8 +329,19 @@ class TossInvestService:
         self._ensure_trading_enabled()
         current = await self.get_order(request.order_id)
         order = self._mapping_data(current, "order")
+        self._ensure_order_is_actionable(order, "modify")
         symbol = str(order["symbol"])
         currency = cast(Literal["KRW", "USD"], order["currency"])
+        if currency == "KRW" and request.quantity is None:
+            raise TossInvestError(
+                "Quantity is required when modifying a Korean stock order",
+                code="kr-modify-quantity-required",
+            )
+        if currency == "USD" and request.quantity is not None:
+            raise TossInvestError(
+                "Quantity cannot be modified for a US stock order",
+                code="us-modify-quantity-not-supported",
+            )
         quantity = request.quantity or str(order["quantity"])
         if request.order_type == "LIMIT":
             estimate_price = Decimal(str(request.price))
@@ -312,6 +393,7 @@ class TossInvestService:
         self._ensure_trading_enabled()
         current = await self.get_order(order_id)
         order = self._mapping_data(current, "order")
+        self._ensure_order_is_actionable(order, "cancel")
         phrase = self._confirmation_phrase(
             "CANCEL",
             str(order["symbol"]),
@@ -411,6 +493,26 @@ class TossInvestService:
     def _ensure_trading_enabled(self) -> None:
         if not self.settings.tossinvest_enable_trading:
             raise TossInvestError("Trading is disabled", code="trading-disabled")
+
+    @staticmethod
+    def _ensure_order_is_actionable(order: dict[str, Any], operation: str) -> None:
+        status = str(order.get("status"))
+        if status not in {"PENDING", "PARTIAL_FILLED"}:
+            raise TossInvestError(
+                f"Order status {status} cannot be used for {operation}",
+                code=f"order-not-{operation}able",
+                data={"status": status},
+            )
+
+    @staticmethod
+    def _validated_symbols(symbols: str) -> str:
+        items = symbols.split(",")
+        if not items or len(items) > 200 or any(not item for item in items):
+            raise TossInvestError(
+                "symbols must contain 1 to 200 non-empty comma-separated symbols",
+                code="invalid-symbols",
+            )
+        return ",".join(items)
 
     @staticmethod
     def _mapping_data(response: dict[str, Any], label: str) -> dict[str, Any]:

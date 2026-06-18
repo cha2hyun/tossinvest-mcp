@@ -69,6 +69,22 @@ async def test_trading_server_registers_preview_and_execution_tools(
 
 
 @pytest.mark.asyncio
+async def test_date_and_datetime_inputs_use_openapi_formats(settings: Settings) -> None:
+    mcp, _ = create_mcp(settings, client=StubClient())  # type: ignore[arg-type]
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+
+    def formats(tool_name: str, parameter_name: str) -> set[str]:
+        parameter = tools[tool_name].parameters["properties"][parameter_name]
+        variants = parameter.get("anyOf", [parameter])
+        return {variant["format"] for variant in variants if "format" in variant}
+
+    assert formats("get_candles", "before") == {"date-time"}
+    assert formats("get_exchange_rate", "date_time") == {"date-time"}
+    assert formats("get_market_calendar", "date") == {"date"}
+    assert formats("list_orders", "from_date") == {"date"}
+
+
+@pytest.mark.asyncio
 async def test_mcp_initialize_list_and_tool_call(settings: Settings) -> None:
     mcp, _ = create_mcp(settings, client=StubClient())  # type: ignore[arg-type]
 

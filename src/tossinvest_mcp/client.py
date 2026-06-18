@@ -122,7 +122,7 @@ class TossInvestClient:
             )
 
         refreshed_after_401 = False
-        max_attempts = 3 if method.upper() == "GET" else 2
+        max_attempts = 3 if method.upper() == "GET" else 1
         attempt = 0
 
         while attempt < max_attempts:
@@ -155,6 +155,8 @@ class TossInvestClient:
             error_code = self._extract_error(payload).get("code")
 
             if response.status_code == 401 and error_code == "expired-token":
+                if write_operation:
+                    raise self._error_from_response(response, payload)
                 if refreshed_after_401 or attempt >= max_attempts:
                     raise self._error_from_response(response, payload)
                 self._token = None

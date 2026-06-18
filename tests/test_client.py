@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from tossinvest_mcp.client import TossInvestClient
-from tossinvest_mcp.errors import OrderStateUnknownError
+from tossinvest_mcp.errors import OrderStateUnknownError, TossInvestError
 from tossinvest_mcp.rate_limit import RateLimiter
 from tossinvest_mcp.settings import Settings
 
@@ -164,4 +164,79 @@ async def test_write_network_failure_is_reported_as_unknown(
 
     assert exc_info.value.code == "order-state-unknown"
     assert exc_info.value.data["retry"] is False
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_write_is_not_retried_when_token_is_reported_expired(
+    settings: Settings,
+) -> None:
+    token_calls = 0
+    order_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, order_calls
+        if request.url.path == "/oauth2/token":
+            token_calls += 1
+            return httpx.Response(
+                200,
+                json={"access_token": "access-token", "token_type": "Bearer", "expires_in": 3600},
+            )
+        order_calls += 1
+        return httpx.Response(
+            401,
+            json={"error": {"code": "expired-token", "message": "expired"}},
+        )
+
+    http = make_http_client(handler)
+    client = TossInvestClient(settings, http_client=http, rate_limiter=NoopRateLimiter())
+
+    with pytest.raises(TossInvestError) as exc_info:
+        await client.request(
+            "POST",
+            "/api/v1/orders",
+            group="ORDER",
+            json={"symbol": "005930"},
+            account_required=True,
+            write_operation=True,
+        )
+
+    assert exc_info.value.code == "expired-token"
+    assert token_calls == 1
+    assert order_calls == 1
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_read_refreshes_an_expired_token_once(settings: Settings) -> None:
+    token_calls = 0
+    price_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, price_calls
+        if request.url.path == "/oauth2/token":
+            token_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": f"access-token-{token_calls}",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                },
+            )
+        price_calls += 1
+        if price_calls == 1:
+            return httpx.Response(
+                401,
+                json={"error": {"code": "expired-token", "message": "expired"}},
+            )
+        assert request.headers["Authorization"] == "Bearer access-token-2"
+        return httpx.Response(200, json={"result": [{"symbol": "005930"}]})
+
+    http = make_http_client(handler)
+    client = TossInvestClient(settings, http_client=http, rate_limiter=NoopRateLimiter())
+    await client.request("GET", "/api/v1/prices", group="MARKET_DATA")
+
+    assert token_calls == 2
+    assert price_calls == 2
     await http.aclose()

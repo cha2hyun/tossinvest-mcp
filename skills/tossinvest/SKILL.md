@@ -1,6 +1,6 @@
 ---
 name: tossinvest
-description: Safely inspect Toss Securities market/account data and use guarded trading tools through the TossInvest MCP server.
+description: Use when inspecting Toss Securities market or account data, or when safely previewing and confirming stock orders through the TossInvest MCP server.
 version: 0.1.0
 author: cha2hyun
 license: MIT
@@ -9,21 +9,49 @@ platforms:
   - macos
   - windows
 metadata:
-  hermes: true
-tags:
-  - finance
-  - stocks
-  - toss-securities
-  - mcp
+  hermes:
+    category: finance
+    tags:
+      - Finance
+      - Stocks
+      - Toss-Securities
+      - MCP
+    related_skills: []
+    requires_tools:
+      - mcp_tossinvest_get_prices
 ---
 
-# TossInvest
+# TossInvest Skill
 
 Use the TossInvest MCP server for official Korean and US stock market data, account inspection,
 and explicitly enabled trading.
 
 Hermes registers the tools with an `mcp_tossinvest_` prefix. Tool names below omit that prefix for
 readability.
+
+## When to Use
+
+- The user asks for Toss Securities market, holding, buying-power, or order data.
+- The user explicitly asks to create, modify, or cancel an order through Toss Securities.
+- A workflow needs the official Toss market calendar, exchange rate, warnings, or commissions.
+
+Do not use this skill for generic investment advice when no TossInvest MCP data is needed.
+
+## Prerequisites
+
+- The TossInvest MCP server is running and authenticated.
+- Hermes has the server configured with the name `tossinvest`.
+- Read-only tools are allowlisted; trading tools are allowlisted only when trading is intended.
+
+## How to Run
+
+Load the skill with `/tossinvest`, or ask Hermes to use the TossInvest skill. Verify the integration
+before relying on it:
+
+```bash
+hermes mcp test tossinvest
+hermes skills list | grep tossinvest
+```
 
 ## Safety rules
 
@@ -73,3 +101,18 @@ For account questions:
 4. Obtain explicit confirmation.
 5. Call the matching execution tool once.
 6. Report the newly returned order ID and latest status.
+
+## Pitfalls
+
+- `list_accounts` returns redacted account metadata, not raw account numbers or account sequences.
+- KRW and USD balances cannot be added without an explicit exchange-rate conversion.
+- A market-order preview is an estimate; the actual execution price can move.
+- An expired preview requires a new preview. Never reuse an old confirmation phrase.
+- A successful write followed by a failed detail lookup must not be repeated.
+
+## Verification
+
+- `get_prices` returns data and retrieval metadata.
+- Trading tools are absent when trading is disabled.
+- A write tool rejects a missing, expired, reused, or incorrect confirmation.
+- `order-state-unknown` leads to order-history inspection, never an automatic retry.
