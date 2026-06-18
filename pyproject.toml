@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tossinvest-mcp"
+version = "0.1.0"
+description = "A safe, Docker-ready MCP server for the official Toss Securities Open API"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE" }
+authors = [
+  { name = "cha2hyun", email = "cha2hyun.dev@gmail.com" },
+]
+dependencies = [
+  "fastmcp==3.4.2",
+  "httpx>=0.28.1,<0.29",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.9,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.26,<1",
+  "respx>=0.22,<1",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+tossinvest-mcp = "tossinvest_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tossinvest_mcp"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["tossinvest_mcp"]
+warn_unused_ignores = true

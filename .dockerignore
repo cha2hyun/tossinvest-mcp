@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+skills
+examples
+scripts
+openapi
+*.md
+!README.md
+!LICENSE

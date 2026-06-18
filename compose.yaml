@@ -1,0 +1,29 @@
+services:
+  tossinvest-mcp:
+    build:
+      context: .
+    image: ghcr.io/cha2hyun/tossinvest-mcp:latest
+    env_file:
+      - ${ENV_FILE:-.env}
+    ports:
+      - "127.0.0.1:${MCP_PORT:-8000}:8000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    stop_grace_period: 15s

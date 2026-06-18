@@ -1,0 +1,26 @@
+{
+  "version": "1.1.1",
+  "operations": [
+    "GET /api/v1/accounts",
+    "GET /api/v1/buying-power",
+    "GET /api/v1/candles",
+    "GET /api/v1/commissions",
+    "GET /api/v1/exchange-rate",
+    "GET /api/v1/holdings",
+    "GET /api/v1/market-calendar/KR",
+    "GET /api/v1/market-calendar/US",
+    "GET /api/v1/orderbook",
+    "GET /api/v1/orders",
+    "GET /api/v1/orders/{orderId}",
+    "GET /api/v1/price-limits",
+    "GET /api/v1/prices",
+    "GET /api/v1/sellable-quantity",
+    "GET /api/v1/stocks",
+    "GET /api/v1/stocks/{symbol}/warnings",
+    "GET /api/v1/trades",
+    "POST /api/v1/orders",
+    "POST /api/v1/orders/{orderId}/cancel",
+    "POST /api/v1/orders/{orderId}/modify",
+    "POST /oauth2/token"
+  ]
+}

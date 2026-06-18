@@ -1,0 +1,32 @@
+# Add this block under the top-level `mcp_servers` key in ~/.hermes/config.yaml.
+# Store only the token value (without "Bearer ") as TOSSINVEST_MCP_AUTH_TOKEN
+# in ~/.hermes/.env.
+mcp_servers:
+  tossinvest:
+    url: "http://127.0.0.1:8000/mcp"
+    headers:
+      Authorization: "Bearer ${TOSSINVEST_MCP_AUTH_TOKEN}"
+    enabled: true
+    timeout: 120
+    connect_timeout: 30
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - get_stock_info
+        - get_stock_warnings
+        - get_prices
+        - get_orderbook
+        - get_recent_trades
+        - get_price_limits
+        - get_candles
+        - get_exchange_rate
+        - get_market_calendar
+        - list_accounts
+        - get_holdings
+        - list_orders
+        - get_order
+        - get_buying_power
+        - get_sellable_quantity
+        - get_commissions
+      resources: false
+      prompts: false
