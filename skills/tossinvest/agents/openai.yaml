@@ -1,0 +1,4 @@
+interface:
+  display_name: "TossInvest"
+  short_description: "Read official Toss Securities market and account data"
+  default_prompt: "Use $tossinvest to inspect official Toss Securities market or account data."

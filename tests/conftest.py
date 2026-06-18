@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 from decimal import Decimal
 
 import pytest
 from pydantic import SecretStr
 
 from tossinvest_mcp.settings import Settings
+
+APPROVAL_TOKEN = "human-approval-token-123456789"  # noqa: S105 - test-only value
+APPROVAL_TOKEN_SHA256 = hashlib.sha256(APPROVAL_TOKEN.encode()).hexdigest()
 
 
 @pytest.fixture
@@ -28,6 +32,8 @@ def trading_settings() -> Settings:
         tossinvest_enable_trading=True,
         tossinvest_max_order_krw=Decimal("10000000"),
         tossinvest_max_order_usd=Decimal("10000"),
+        tossinvest_approval_token_sha256=SecretStr(APPROVAL_TOKEN_SHA256),
+        tossinvest_approval_base_url="http://127.0.0.1:8000",
         tossinvest_base_url="https://openapi.test",
         mcp_auth_token=SecretStr("mcp-test-token-1234"),
     )

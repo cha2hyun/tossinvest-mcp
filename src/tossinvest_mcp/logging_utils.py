@@ -4,9 +4,13 @@ from collections.abc import Mapping
 from typing import Any
 
 SENSITIVE_KEYS = {
+    "access_token",
+    "approval_token",
     "authorization",
     "client_secret",
     "mcp_auth_token",
+    "refresh_token",
+    "tossinvest_approval_token_sha256",
     "tossinvest_client_secret",
     "x-tossinvest-account",
 }

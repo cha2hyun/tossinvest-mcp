@@ -1,8 +1,5 @@
-# Add this block under the top-level `mcp_servers` key in ~/.hermes/config.yaml.
-# Store only the token value (without "Bearer ") as TOSSINVEST_MCP_AUTH_TOKEN
-# in ~/.hermes/.env.
-# Never put the human approval token or TOSSINVEST_APPROVAL_TOKEN_SHA256 in Hermes.
-# This example intentionally allowlists read-only tools only.
+# DANGEROUS: use only with a server intentionally started with
+# --dangerously-enable-trading. Never place the human approval token or its hash in Hermes.
 mcp_servers:
   tossinvest:
     url: "http://127.0.0.1:8000/mcp"
@@ -30,5 +27,11 @@ mcp_servers:
         - get_buying_power
         - get_sellable_quantity
         - get_commissions
+        - preview_order
+        - place_order
+        - preview_order_modification
+        - modify_order
+        - preview_order_cancellation
+        - cancel_order
       resources: false
       prompts: false

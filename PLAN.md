@@ -1,37 +1,39 @@
-# TossInvest MCP Server 구현 계획
+# TossInvest MCP 프로젝트 상태
 
-## 기본 결정
+## 목표
 
-- 토스증권 공식 Open API를 Hermes Agent에서 사용하는 오픈소스 MCP 서버로 구현한다.
-- 라이선스는 MIT이며 저작권자는 `cha2hyun`이다.
-- Python 3.12, FastMCP 3.4.x, httpx, Pydantic, uv를 사용한다.
-- Streamable HTTP와 Docker Compose로 배포한다.
-- 기본 주소는 `http://127.0.0.1:8000/mcp`이다.
-- 기본 동작은 조회 전용이며 기준 명세는 토스증권 Open API v1.1.1이다.
+토스증권 공식 Open API를 Hermes Agent 같은 MCP 클라이언트에서 안전하게 사용할 수 있도록
+조회 기능을 기본 제공하고, 주문 기능은 명시적 활성화와 별도 사람 승인 뒤에만 제공한다.
 
-## 구현
+## 현재 구현
 
-- OAuth2 토큰 자동 발급·캐시, 계좌 헤더 적용, Decimal 기반 금액 처리, API 그룹별 rate limit,
-  조회 429 재시도, requestId 보존, 비밀정보 마스킹을 구현한다.
-- 공식 시세·종목·시장·계좌·자산·주문 조회 API를 MCP 도구로 제공한다.
-- 주문은 기본 비활성화하며 미리보기와 일회용 확인을 거쳐 생성·정정·취소한다.
-- 주문 한도, 1억원 이상 차단, clientOrderId 멱등성, 계좌별 직렬 실행, 불명확한 네트워크
-  실패의 재시도 금지를 서버가 강제한다.
+- Python 3.12, FastMCP, httpx, Pydantic과 uv 기반 Streamable HTTP 서버
+- 토스증권 Open API v1.1.1의 전체 조회 operation
+- OAuth2 client-credentials 발급, 메모리 캐시와 동시 갱신 방지
+- 계좌 헤더 주입과 MCP 응답의 계좌 식별 정보 제거
+- API 그룹별 rate limit과 조회 요청에 한정된 안전한 재시도
+- 기본 조회 전용 실행과 명시적 `--dangerously-enable-trading` 거래 활성화
+- 미리보기, 별도 사람 승인, 실행 직전 상태 재검증과 일회용 쓰기
+- KRW/USD 설정 한도, 1억원 hard block과 보수적인 시장가 정책
+- 주문 쓰기 자동 재시도 금지와 `order-state-unknown` 복구 지침
+- MCP 인증, Origin 검사, Tool annotation과 구조화된 output schema
+- non-root, read-only filesystem, capability 제거가 적용된 Docker Compose
+- 조회·거래 workflow를 분리한 Hermes Skill
+- Ruff, mypy, pytest, dependency audit, secret scan, OpenAPI drift와 Docker build CI
 
-## 배포 및 Hermes
+## 설계 경계
 
-- `/mcp`, `/healthz`, `/readyz`를 제공한다.
-- MCP Bearer 인증, Origin 검사, non-root/read-only Docker 실행을 적용한다.
-- Hermes 조회 도구 allowlist 예제와 거래 안전 절차를 설명하는 Skill을 제공한다.
+- 단일 worker와 단일 인스턴스를 전제로 preview 상태를 메모리에 저장한다.
+- 서버 재시작 시 preview와 승인 상태는 모두 무효화된다.
+- 호스트 관리자와 Docker daemon 접근자는 process 환경과 memory를 볼 수 있는 신뢰
+  경계에 포함된다.
+- 공식 sandbox가 보장되지 않으므로 CI와 자동 검증은 실제 주문을 실행하지 않는다.
 
-## 오픈소스와 검증
+## 유지보수
 
-- 영문·한글 README, MIT 라이선스, 기여·보안·행동강령 문서를 포함한다.
-- Ruff, mypy, pytest, secret scan, OpenAPI 계약 검사, Docker build CI를 실행한다.
-- SemVer 태그에서 `linux/amd64`, `linux/arm64` GHCR 이미지를 배포한다.
-- CI에서는 실제 주문을 실행하지 않는다.
-
-## Git 정책
-
-- Author와 Committer는 `cha2hyun <cha2hyun.dev@gmail.com>`만 사용한다.
-- 공동 작성자 또는 별도 작성자 목록을 추가하지 않는다.
+- 공식 OpenAPI 변경은 `scripts/update_openapi.py --check`로 감지하고 검토 후 manifest를
+  갱신한다.
+- 문서, 환경변수 예제와 Skill은 CI에서 의미적 드리프트를 검사한다.
+- 보안과 에이전트 사용성 개선 내역은 [IMPROVEMENTS.md](IMPROVEMENTS.md)에서 추적한다.
+- 라이브 주문과 관련된 변경은 인증, 승인, 한도, 재검증과 재시도 금지 회귀 테스트를 반드시
+  포함한다.

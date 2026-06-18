@@ -6,8 +6,8 @@
 클라이언트에서 사용할 수 있도록 만든 오픈소스 MCP 서버입니다.
 
 국내·미국 주식의 종목 정보와 시세, 계좌 자산, 주문 내역을 조회할 수 있습니다. 주문 기능은
-기본적으로 꺼져 있으며, 별도로 활성화한 경우에도 미리보기와 일회용 확인 절차를 통과해야
-주문 생성·정정·취소가 실행됩니다.
+기본적으로 꺼져 있으며, 별도로 활성화한 경우에도 미리보기와 MCP 채널 밖의 사람 승인 절차를
+통과해야 주문 생성·정정·취소가 실행됩니다.
 
 > 이 프로젝트는 토스증권의 공식 제품이 아닌 독립 오픈소스 프로젝트입니다. 투자 조언을
 > 제공하지 않으며, 이 서버를 통해 실행한 주문과 그 결과에 대한 책임은 사용자에게 있습니다.
@@ -41,14 +41,16 @@
 - 주문 생성·정정·취소 요청은 어떤 경우에도 자동 재시도하지 않음
 - 계좌번호와 account sequence를 MCP 응답에서 제거
 - 기본 조회 전용 모드
-- 주문 생성·정정·취소의 미리보기 → 명시적 확인 → 실행 흐름
-- 2분 후 만료되는 일회용 주문 확인 정보
+- 주문 생성·정정·취소의 미리보기 → 별도 사람 승인 → 실행 흐름
+- 에이전트 token과 분리된 사람 전용 승인 token
+- 2분 후 만료되는 일회용 주문 승인 상태
 - 원화·달러 주문 한도와 1억원 이상 주문의 강제 차단
 - 국내 시장가 주문을 현재가가 아닌 공식 상한가 기준으로 보수적으로 검사
 - 매수 가능 금액과 판매 가능 수량을 주문 미리보기 단계에서 검증
 - Bearer 인증과 Origin 검사가 적용된 Streamable HTTP MCP
+- 조회·미리보기·실행 위험도를 구분하는 MCP Tool annotation과 구조화된 응답 schema
 - non-root, read-only filesystem, capability 제거가 적용된 Docker 구성
-- Hermes Agent 설정 예제 및 거래 안전 절차를 담은 Skill 제공
+- 조회 전용과 거래 절차를 분리한 Hermes Agent Skill 제공
 
 ## 동작 구조
 
@@ -56,6 +58,7 @@
 flowchart LR
     U["사용자"] --> H["Hermes Agent"]
     H -->|"MCP Streamable HTTP<br/>Bearer 인증"| M["TossInvest MCP"]
+    U -->|"별도 승인 페이지<br/>사람 전용 token"| M
     M --> A["OAuth 토큰 캐시"]
     M --> R["Rate Limiter"]
     M --> S["주문 안전장치"]
@@ -98,7 +101,8 @@ cp .env.example .env
 openssl rand -hex 32
 ```
 
-`openssl`이 출력한 임의 문자열은 `.env`의 `MCP_AUTH_TOKEN`에 넣습니다.
+출력된 임의 문자열은 `.env`의 `MCP_AUTH_TOKEN`에 넣습니다. 이 값은
+`TOSSINVEST_CLIENT_SECRET`과 반드시 달라야 합니다.
 
 최소 설정 예시:
 
@@ -106,7 +110,6 @@ openssl rand -hex 32
 TOSSINVEST_CLIENT_ID=발급받은_client_id
 TOSSINVEST_CLIENT_SECRET=발급받은_client_secret
 TOSSINVEST_ACCOUNT_SEQ=1
-TOSSINVEST_ENABLE_TRADING=false
 
 MCP_AUTH_TOKEN=openssl로_생성한_충분히_긴_임의_문자열
 MCP_PUBLISHED_PORT=8000
@@ -190,9 +193,10 @@ MCP의 `list_accounts` 도구는 보안을 위해 원본 계좌번호와 `accoun
 | `TOSSINVEST_CLIENT_ID` | 항상 | 없음 | 토스증권 Open API 클라이언트 ID |
 | `TOSSINVEST_CLIENT_SECRET` | 항상 | 없음 | 토스증권 Open API 클라이언트 secret |
 | `TOSSINVEST_ACCOUNT_SEQ` | 계좌·주문 도구 | 없음 | 서버가 사용할 고정 계좌 sequence |
-| `TOSSINVEST_ENABLE_TRADING` | 선택 | `false` | 주문 도구 등록 여부 |
 | `TOSSINVEST_MAX_ORDER_KRW` | 주문 활성화 | 없음 | 단일 원화 주문 최대 금액 |
 | `TOSSINVEST_MAX_ORDER_USD` | 주문 활성화 | 없음 | 단일 달러 주문 최대 금액 |
+| `TOSSINVEST_APPROVAL_TOKEN_SHA256` | 주문 활성화 | 없음 | 사람 전용 승인 token의 SHA-256 hex digest |
+| `TOSSINVEST_APPROVAL_BASE_URL` | 선택 | `http://127.0.0.1:8000` | 미리보기에 표시할 승인 페이지 주소 |
 | `TOSSINVEST_BASE_URL` | 선택 | 공식 API 주소 | 테스트 또는 호환 프록시용 API 주소 |
 | `TOSSINVEST_REQUEST_TIMEOUT` | 선택 | `15` | 토스 API 요청 timeout(초) |
 | `MCP_AUTH_TOKEN` | 항상 | 없음 | MCP 연결에 사용하는 Bearer token, 최소 16자 |
@@ -206,7 +210,11 @@ MCP의 `list_accounts` 도구는 보안을 위해 원본 계좌번호와 `accoun
 
 - `.env`는 `.gitignore`에 포함되어 있지만 별도로 백업·공유하지 않는 것이 안전합니다.
 - `MCP_AUTH_TOKEN`은 토스증권 `client_secret`과 다른 값이어야 합니다.
-- 주문 기능을 켜면 계좌 sequence와 두 통화의 주문 한도가 모두 필요합니다.
+- 사람 전용 승인 token은 MCP token과 토스증권 secret 모두와 달라야 합니다.
+- 주문 기능을 켜면 계좌 sequence, 두 통화의 주문 한도, 승인 token이 모두 필요합니다.
+- 원문 승인 token은 서버 `.env`, Hermes 환경변수, Hermes 설정에 넣지 마세요. 서버에는
+  `TOSSINVEST_APPROVAL_TOKEN_SHA256`만 저장합니다.
+- Hermes에 서버 `.env`를 읽을 수 있는 filesystem/shell 권한을 부여하면 승인 경계가 무너집니다.
 - 빈 주문 한도는 무제한을 의미하지 않습니다. 주문 활성화 시 서버 시작 실패로 처리됩니다.
 
 ## Docker로 실행
@@ -244,7 +252,11 @@ MCP_PUBLISHED_PORT=18000
 ```
 
 이 경우 MCP 주소는 `http://127.0.0.1:18000/mcp`가 됩니다. Hermes 설정의 URL도 같은 포트로
-수정해야 합니다.
+수정해야 합니다. 거래 기능을 사용한다면 승인 URL도 같은 포트를 가리키도록 설정합니다.
+
+```dotenv
+TOSSINVEST_APPROVAL_BASE_URL=http://127.0.0.1:18000
+```
 
 Compose는 기본적으로 포트를 `127.0.0.1`에만 바인딩합니다. 같은 컴퓨터에서 실행되는
 Hermes만 접근할 수 있는 구성이며, 특별한 이유 없이 `0.0.0.0`으로 공개하지 마세요.
@@ -325,20 +337,22 @@ MCP 도구는 “무엇을 실행할 수 있는지”를 제공하고, Skill은 
 규칙으로 사용해야 하는지”를 알려줍니다.
 
 ```bash
-mkdir -p ~/.hermes/skills/tossinvest
-cp skills/tossinvest/SKILL.md ~/.hermes/skills/tossinvest/SKILL.md
+mkdir -p ~/.hermes/skills
+cp -R skills/tossinvest ~/.hermes/skills/
+cp -R skills/tossinvest-trading ~/.hermes/skills/
 hermes skills list | grep tossinvest
 ```
 
-설치 후 새 Hermes 세션을 시작합니다. Skill은 다음 흐름을 안내합니다.
+설치 후 새 Hermes 세션을 시작합니다. `tossinvest`는 조회 절차만 안내합니다.
+`tossinvest-trading`은 거래 도구가 실제로 등록된 경우에만 나타나며 다음 흐름을 안내합니다.
 
 1. 종목과 시장 확인
 2. 장 운영 시간 확인
 3. 종목 경고 조회
 4. 매수 가능 금액 또는 판매 가능 수량 확인
-5. 주문 미리보기
-6. 사용자에게 정확한 주문 내용 제시
-7. 명시적 확인 후 한 번만 주문 실행
+5. 주문 미리보기와 승인 URL 제시
+6. 사용자가 별도 승인 페이지에서 주문 내용 확인
+7. 사람 전용 token으로 승인한 뒤 한 번만 주문 실행
 8. 주문 상세 재조회
 9. 상태가 불명확하면 재주문하지 않고 주문 내역 확인
 
@@ -394,7 +408,7 @@ Hermes에서는 서버 이름이 도구명 앞에 붙어 `mcp_tossinvest_get_pri
 
 ### 주문 실행
 
-다음 도구는 `TOSSINVEST_ENABLE_TRADING=true`일 때만 등록됩니다.
+다음 도구는 서버를 `--dangerously-enable-trading` 인자로 시작했을 때만 등록됩니다.
 
 | 단계 | 미리보기 도구 | 실행 도구 |
 | --- | --- | --- |
@@ -406,22 +420,54 @@ Hermes에서는 서버 이름이 도구명 앞에 붙어 `mcp_tossinvest_get_pri
 
 먼저 충분히 낮은 주문 한도로 시작하세요.
 
-`.env`:
+사람 전용 승인 token을 32-byte 난수로 생성하고 비밀번호 관리자 등 서버·Hermes 밖의 안전한
+장소에 저장합니다. 원문 token은 `.env`에 넣지 않습니다.
+
+```bash
+openssl rand -hex 32
+```
+
+저장한 token을 화면에 다시 노출하지 않고 SHA-256 digest를 계산합니다.
+
+```bash
+read -rsp "Approval token: " APPROVAL_TOKEN
+echo
+printf '%s' "$APPROVAL_TOKEN" | openssl dgst -sha256 -r | awk '{print $1}'
+unset APPROVAL_TOKEN
+```
+
+출력된 64자리 digest만 `.env`에 설정합니다.
 
 ```dotenv
 TOSSINVEST_ACCOUNT_SEQ=1
-TOSSINVEST_ENABLE_TRADING=true
 TOSSINVEST_MAX_ORDER_KRW=1000000
 TOSSINVEST_MAX_ORDER_USD=500
+TOSSINVEST_APPROVAL_TOKEN_SHA256=승인_token의_64자리_sha256_digest
+TOSSINVEST_APPROVAL_BASE_URL=http://127.0.0.1:8000
 ```
 
-설정을 변경한 뒤 컨테이너를 다시 생성합니다.
+환경변수만으로는 주문 기능을 활성화할 수 없습니다. 기본 `compose.yaml`에 거래 전용 override
+파일을 명시적으로 추가하여 서버 시작 명령에 위험 인자를 전달해야 합니다.
 
 ```bash
-docker compose up -d --build --force-recreate
+docker compose \
+  -f compose.yaml \
+  -f compose.trading.yaml \
+  up -d --build --force-recreate
 ```
 
+직접 실행할 때는 다음과 같습니다.
+
+```bash
+uv run tossinvest-mcp --dangerously-enable-trading
+```
+
+`TOSSINVEST_ENABLE_TRADING=true` 같은 환경변수는 주문 기능을 열지 않습니다. 정확한
+`--dangerously-enable-trading` 인자가 필요합니다.
+
 Hermes allowlist에도 주문 도구를 명시적으로 추가해야 합니다.
+전체 예시는 [`examples/hermes-trading-config.yaml`](examples/hermes-trading-config.yaml)에
+있습니다.
 
 ```yaml
 tools:
@@ -441,25 +487,40 @@ tools:
 
 ### 1. 거래 도구 기본 비노출
 
-`TOSSINVEST_ENABLE_TRADING=false`이면 주문 도구는 실행 실패 상태로 남는 것이 아니라 MCP
-도구 목록 자체에 등록되지 않습니다.
+기본 `tossinvest-mcp` 명령과 기본 `compose.yaml`은 주문 도구를 MCP 도구 목록 자체에
+등록하지 않습니다. 주문 도구를 열려면 서버 시작 시 `--dangerously-enable-trading`을
+명시해야 합니다.
 
-### 2. 미리보기와 일회용 확인
+### 2. MCP 채널과 분리된 사람 승인
 
 주문을 바로 실행할 수 없습니다. 먼저 미리보기 도구를 호출해야 합니다.
 
 미리보기는 다음 정보를 반환합니다.
 
 - `preview_id`
-- 2분간 유효한 정확한 확인 문구
+- 사람이 열어야 하는 `approval_url`
 - 종목, 방향, 가격, 수량 또는 금액
 - 현재가와 예상 주문 금액
 - 원화 환산 예상 금액
 - 종목 경고와 장 운영 정보
 - 매수 가능 금액 또는 판매 가능 수량
 
-실행 도구는 같은 `preview_id`와 정확한 확인 문구를 요구합니다. 확인 정보는 한 번 사용하면
-폐기되며, 2분이 지나거나 서버가 재시작되면 새 미리보기가 필요합니다.
+미리보기 응답에는 주문을 승인할 수 있는 secret이나 확인 문구가 들어 있지 않습니다.
+에이전트가 `place_order`, `modify_order`, `cancel_order`를 바로 호출하면 서버는
+`approval-required`로 거부하며 토스증권 주문 API를 호출하지 않습니다.
+
+사람은 `approval_url`을 브라우저로 열어 정확한 주문 내용을 확인하고,
+별도로 보관한 원문 승인 token을 입력해야 합니다. 서버는 입력값의 SHA-256 digest만 비교하며
+원문 token을 저장하지 않습니다. 이 token은 Hermes에 전달하지 않는 별도 credential입니다.
+승인 상태는 한 번 사용하면 폐기되며, 2분이 지나거나 서버가 재시작되면 새 미리보기가
+필요합니다. Origin이 없거나 일치하지 않는 승인 요청은 거부하며 반복 요청과 preview별
+실패 횟수도 제한합니다.
+
+```text
+Hermes MCP token ── 미리보기/실행 요청
+사람 승인 token  ── 별도 웹 승인
+두 조건 모두 충족 ── 토스증권 주문 POST
+```
 
 ### 3. 주문 금액 제한
 
@@ -475,7 +536,18 @@ tools:
 검사합니다. 실제 주문 시점의 가격 변동으로 설정 한도를 넘어갈 가능성을 줄이기 위한
 정책입니다.
 
-### 5. 주문 자동 재시도 금지
+공식 상한가로 절대 한도를 계산할 수 없는 미국 수량 기반 시장가 주문은 거부합니다. 미국
+시장가 주문은 지원되는 경우 고정 `order_amount`를 사용해야 하며, 미국 시장가 정정도
+거부합니다.
+
+### 5. 실행 직전 재검증
+
+사람 승인 후 실행 도구가 호출되면 서버는 가격, 환율, 매수 가능 금액 또는 판매 가능 수량,
+주문 상태와 설정 한도를 다시 조회합니다. 상태가 달라졌거나 한도를 넘으면 해당 preview를
+폐기하고 `preview-state-changed`를 반환합니다. 변경된 상태로 새 preview와 새 승인이
+필요합니다.
+
+### 6. 주문 자동 재시도 금지
 
 주문 생성·정정·취소는 토큰 만료 응답, rate limit, timeout, 네트워크 오류가 발생해도
 자동으로 재전송하지 않습니다.
@@ -489,7 +561,7 @@ order-state-unknown
 이 경우 같은 주문을 다시 실행하지 말고 `list_orders`와 `get_order`로 상태부터 확인해야
 합니다.
 
-### 6. 멱등성
+### 7. 멱등성
 
 주문 생성 시 서버가 `clientOrderId`를 자동 생성합니다. 토스증권은 이 값을 기준으로 10분간
 멱등성을 제공합니다. 다만 이 기능을 믿고 애플리케이션이 주문을 자동 재시도하지는 않습니다.
@@ -529,8 +601,8 @@ order-state-unknown
 }
 ```
 
-토스증권 Authorization header, OAuth access token, client secret, account sequence는 결과나
-로그에 노출하지 않습니다.
+토스증권 Authorization header, OAuth access token, client secret, account sequence와 승인
+token digest는 MCP 도구 schema, 결과, resource, prompt에 노출하지 않습니다.
 
 ## 운영과 보안
 
@@ -636,10 +708,29 @@ docker compose up -d --force-recreate
 
 다음을 모두 확인하세요.
 
-1. `TOSSINVEST_ENABLE_TRADING=true`
-2. 원화·달러 주문 한도가 모두 설정됨
-3. 컨테이너가 설정 변경 후 다시 생성됨
-4. Hermes `tools.include`에 거래 도구가 추가됨
+1. Docker 실행 시 `compose.trading.yaml`을 함께 지정했는지 확인
+2. 직접 실행 시 `--dangerously-enable-trading`을 사용했는지 확인
+3. 원화·달러 주문 한도와 사람 승인 token이 모두 설정됐는지 확인
+4. 컨테이너가 설정 변경 후 다시 생성됐는지 확인
+5. Hermes `tools.include`에 거래 도구가 추가됐는지 확인
+
+### `approval-required`
+
+미리보기 결과의 `approval_url`을 사람이 직접 브라우저로 열고 주문 내용을 확인해야 합니다.
+승인 페이지에서 서버 밖에 별도로 보관한 원문 승인 token을 입력한 뒤 실행 도구를 다시
+호출하세요. `.env`에는 원문이 아니라 `TOSSINVEST_APPROVAL_TOKEN_SHA256`만 있어야 합니다.
+
+승인 token을 Hermes 채팅, Hermes 환경변수, Skill, MCP 입력에 복사하면 안 됩니다.
+
+### `preview-state-changed`
+
+승인 후 실행 직전 재검증에서 가격, 환율, 잔고, 판매 가능 수량 또는 주문 상태가 달라졌습니다.
+기존 preview는 폐기됩니다. 변경된 내용을 확인하고 새 preview부터 다시 진행하세요.
+
+### `unbounded-market-order`
+
+설정 한도를 보수적으로 보장할 수 없는 시장가 요청입니다. 미국 시장가 신규 주문은 고정
+`order_amount`를 사용하고, 시장가 정정은 지정가 정정으로 바꾸어 새 preview를 만드세요.
 
 ### `origin-not-allowed`
 
@@ -673,7 +764,7 @@ Origin을 보내지 않는 일반 서버 클라이언트와 Hermes 로컬 연결
 - WebSocket 기반 실시간 스트리밍을 제공하지 않습니다.
 - 시세 갱신이 필요한 에이전트는 조회 API를 polling해야 합니다.
 - OAuth token과 주문 preview는 메모리에만 저장됩니다.
-- 서버 재시작 시 기존 preview와 확인 문구는 무효화됩니다.
+- 서버 재시작 시 기존 preview와 승인 상태는 무효화됩니다.
 - 안전한 일회용 preview를 위해 단일 worker로 실행합니다.
 - 현재 구성은 단일 인스턴스를 전제로 하며 수평 확장용 공유 상태 저장소가 없습니다.
 - 공식 모의투자 또는 sandbox가 문서화되지 않은 경우 실계좌 주문 테스트가 될 수 있습니다.

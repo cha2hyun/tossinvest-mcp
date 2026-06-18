@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import secrets
 import uuid
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -225,6 +224,11 @@ class TossInvestService:
                 "Amount-based orders are supported only for US stocks",
                 code="amount-order-market-not-supported",
             )
+        if currency == "USD" and request.order_type == "MARKET" and request.quantity is not None:
+            raise TossInvestError(
+                "Quantity-based US market orders cannot be bounded safely; use order_amount",
+                code="unbounded-market-order",
+            )
         if request.time_in_force == "CLS" and currency != "USD":
             raise TossInvestError(
                 "CLS orders are supported only for US stocks",
@@ -287,32 +291,36 @@ class TossInvestService:
         estimated_krw = await self._enforce_order_limits(currency, estimated_amount)
         client_order_id = uuid.uuid4().hex
         api_payload = request.to_api_payload(client_order_id)
-        phrase = self._confirmation_phrase("ORDER", request.symbol, request.side)
-        preview = await self.previews.create("create", api_payload, phrase)
+        summary = {
+            "operation": "create",
+            "order": api_payload,
+            "stock": stock,
+            "warnings": warnings["data"],
+            "current_price": price,
+            "price_limits": price_limit_data,
+            "market_calendar": calendar["data"],
+            "availability": availability_data,
+            "estimated_amount": str(estimated_amount),
+            "currency": currency,
+            "estimated_krw": str(estimated_krw),
+        }
+        preview = await self.previews.create("create", api_payload, summary)
+        return self._preview_response(preview)
 
-        return self._preview_response(
-            preview,
-            {
-                "operation": "create",
-                "order": api_payload,
-                "stock": stock,
-                "warnings": warnings["data"],
-                "current_price": price,
-                "price_limits": price_limit_data,
-                "market_calendar": calendar["data"],
-                "availability": availability_data,
-                "estimated_amount": str(estimated_amount),
-                "currency": currency,
-                "estimated_krw": str(estimated_krw),
-            },
-        )
-
-    async def place_order(self, preview_id: str, confirmation_phrase: str) -> dict[str, Any]:
+    async def place_order(self, preview_id: str) -> dict[str, Any]:
         self._ensure_trading_enabled()
         async with self._trading_lock:
+            preview = await self.previews.require_approved(
+                preview_id,
+                expected_kind="create",
+            )
+            try:
+                await self._revalidate_create_preview(preview)
+            except TossInvestError:
+                await self.previews.invalidate(preview_id)
+                raise
             preview = await self.previews.consume(
                 preview_id,
-                confirmation_phrase,
                 expected_kind="create",
             )
             operation = await self.client.request(
@@ -345,36 +353,58 @@ class TossInvestService:
         quantity = request.quantity or str(order["quantity"])
         if request.order_type == "LIMIT":
             estimate_price = Decimal(str(request.price))
+        elif currency == "KRW":
+            price_limits = await self.get_price_limits(symbol)
+            price_limit_data = self._mapping_data(price_limits, "price limit")
+            upper_limit = price_limit_data.get("upperLimitPrice")
+            if upper_limit is None:
+                raise TossInvestError(
+                    "A Korean market modification cannot be bounded without an upper price limit",
+                    code="market-order-limit-unavailable",
+                )
+            estimate_price = Decimal(str(upper_limit))
         else:
-            price_response = await self.get_prices(symbol)
-            estimate_price = Decimal(str(self._first_item(price_response, "price")["lastPrice"]))
+            raise TossInvestError(
+                "US market-order modifications cannot be bounded safely",
+                code="unbounded-market-order",
+            )
         estimated_amount = Decimal(quantity) * estimate_price
         estimated_krw = await self._enforce_order_limits(currency, estimated_amount)
+        await self._validate_modification_availability(
+            order,
+            proposed_quantity=Decimal(quantity),
+            proposed_amount=estimated_amount,
+        )
 
         payload = {
             "order_id": request.order_id,
             "body": request.to_api_payload(),
         }
-        phrase = self._confirmation_phrase("MODIFY", symbol, str(order["side"]))
-        preview = await self.previews.create("modify", payload, phrase)
-        return self._preview_response(
-            preview,
-            {
-                "operation": "modify",
-                "current_order": order,
-                "modification": payload["body"],
-                "estimated_amount": str(estimated_amount),
-                "currency": currency,
-                "estimated_krw": str(estimated_krw),
-            },
-        )
+        summary = {
+            "operation": "modify",
+            "current_order": order,
+            "modification": payload["body"],
+            "estimated_amount": str(estimated_amount),
+            "currency": currency,
+            "estimated_krw": str(estimated_krw),
+        }
+        preview = await self.previews.create("modify", payload, summary)
+        return self._preview_response(preview)
 
-    async def modify_order(self, preview_id: str, confirmation_phrase: str) -> dict[str, Any]:
+    async def modify_order(self, preview_id: str) -> dict[str, Any]:
         self._ensure_trading_enabled()
         async with self._trading_lock:
+            preview = await self.previews.require_approved(
+                preview_id,
+                expected_kind="modify",
+            )
+            try:
+                await self._revalidate_modify_preview(preview)
+            except TossInvestError:
+                await self.previews.invalidate(preview_id)
+                raise
             preview = await self.previews.consume(
                 preview_id,
-                confirmation_phrase,
                 expected_kind="modify",
             )
             order_id = str(preview.payload["order_id"])
@@ -394,26 +424,35 @@ class TossInvestService:
         current = await self.get_order(order_id)
         order = self._mapping_data(current, "order")
         self._ensure_order_is_actionable(order, "cancel")
-        phrase = self._confirmation_phrase(
-            "CANCEL",
-            str(order["symbol"]),
-            str(order["side"]),
-        )
-        preview = await self.previews.create("cancel", {"order_id": order_id}, phrase)
-        return self._preview_response(
-            preview,
+        preview = await self.previews.create(
+            "cancel",
+            {"order_id": order_id},
             {
                 "operation": "cancel",
                 "current_order": order,
             },
         )
+        return self._preview_response(preview)
 
-    async def cancel_order(self, preview_id: str, confirmation_phrase: str) -> dict[str, Any]:
+    async def cancel_order(self, preview_id: str) -> dict[str, Any]:
         self._ensure_trading_enabled()
         async with self._trading_lock:
+            preview = await self.previews.require_approved(
+                preview_id,
+                expected_kind="cancel",
+            )
+            try:
+                order_id = str(preview.payload["order_id"])
+                current = await self.get_order(order_id)
+                self._ensure_order_is_actionable(
+                    self._mapping_data(current, "order"),
+                    "cancel",
+                )
+            except TossInvestError:
+                await self.previews.invalidate(preview_id)
+                raise
             preview = await self.previews.consume(
                 preview_id,
-                confirmation_phrase,
                 expected_kind="cancel",
             )
             order_id = str(preview.payload["order_id"])
@@ -426,6 +465,176 @@ class TossInvestService:
                 write_operation=True,
             )
             return await self._operation_with_order_detail(operation)
+
+    async def _revalidate_create_preview(self, preview: Preview) -> None:
+        payload = preview.payload
+        symbol = str(payload["symbol"])
+        side = str(payload["side"])
+        order_type = str(payload["orderType"])
+
+        stock = self._first_item(await self.get_stock_info(symbol), "stock")
+        currency = cast(Literal["KRW", "USD"], stock.get("currency"))
+        if currency not in {"KRW", "USD"}:
+            raise TossInvestError("Unsupported stock currency", code="unsupported-currency")
+        if currency != preview.summary.get("currency"):
+            raise TossInvestError(
+                "The stock currency changed after preview",
+                code="preview-state-changed",
+            )
+
+        price = self._first_item(await self.get_prices(symbol), "price")
+        market_price = Decimal(str(price["lastPrice"]))
+        if "orderAmount" in payload:
+            estimated_amount = Decimal(str(payload["orderAmount"]))
+        else:
+            quantity = Decimal(str(payload["quantity"]))
+            if order_type == "LIMIT":
+                estimate_price = Decimal(str(payload["price"]))
+            elif currency == "KRW":
+                limits = self._mapping_data(
+                    await self.get_price_limits(symbol),
+                    "price limit",
+                )
+                upper_limit = limits.get("upperLimitPrice")
+                if upper_limit is None:
+                    raise TossInvestError(
+                        "A Korean market order cannot be bounded without an upper price limit",
+                        code="market-order-limit-unavailable",
+                    )
+                estimate_price = Decimal(str(upper_limit))
+            else:
+                raise TossInvestError(
+                    "Quantity-based US market orders cannot be bounded safely",
+                    code="unbounded-market-order",
+                )
+            estimated_amount = quantity * estimate_price
+
+        availability = (
+            await self.get_buying_power(currency)
+            if side == "BUY"
+            else await self.get_sellable_quantity(symbol)
+        )
+        availability_data = self._mapping_data(availability, "order availability")
+        if side == "BUY":
+            buying_power = Decimal(str(availability_data["cashBuyingPower"]))
+            if estimated_amount > buying_power:
+                raise TossInvestError(
+                    "Buying power changed after preview",
+                    code="preview-state-changed",
+                    data={
+                        "estimated": str(estimated_amount),
+                        "buying_power": str(buying_power),
+                    },
+                )
+        else:
+            sellable = Decimal(str(availability_data["sellableQuantity"]))
+            estimated_quantity = (
+                Decimal(str(payload["quantity"]))
+                if "quantity" in payload
+                else Decimal(str(payload["orderAmount"])) / market_price
+            )
+            if estimated_quantity > sellable:
+                raise TossInvestError(
+                    "Sellable quantity changed after preview",
+                    code="preview-state-changed",
+                    data={
+                        "estimated_quantity": str(estimated_quantity),
+                        "sellable_quantity": str(sellable),
+                    },
+                )
+        await self._enforce_order_limits(currency, estimated_amount)
+
+    async def _revalidate_modify_preview(self, preview: Preview) -> None:
+        order_id = str(preview.payload["order_id"])
+        body = cast(dict[str, Any], preview.payload["body"])
+        current = self._mapping_data(await self.get_order(order_id), "order")
+        self._ensure_order_is_actionable(current, "modify")
+
+        symbol = str(current["symbol"])
+        currency = cast(Literal["KRW", "USD"], current["currency"])
+        quantity = Decimal(str(body.get("quantity") or current["quantity"]))
+        if body["orderType"] == "LIMIT":
+            estimate_price = Decimal(str(body["price"]))
+        elif currency == "KRW":
+            limits = self._mapping_data(
+                await self.get_price_limits(symbol),
+                "price limit",
+            )
+            upper_limit = limits.get("upperLimitPrice")
+            if upper_limit is None:
+                raise TossInvestError(
+                    "A Korean market modification cannot be bounded without an upper price limit",
+                    code="market-order-limit-unavailable",
+                )
+            estimate_price = Decimal(str(upper_limit))
+        else:
+            raise TossInvestError(
+                "US market-order modifications cannot be bounded safely",
+                code="unbounded-market-order",
+            )
+        proposed_amount = quantity * estimate_price
+        await self._enforce_order_limits(currency, proposed_amount)
+        await self._validate_modification_availability(
+            current,
+            proposed_quantity=quantity,
+            proposed_amount=proposed_amount,
+        )
+
+    async def _validate_modification_availability(
+        self,
+        current: dict[str, Any],
+        *,
+        proposed_quantity: Decimal,
+        proposed_amount: Decimal,
+    ) -> None:
+        side = str(current["side"])
+        current_quantity = Decimal(str(current["quantity"]))
+        if side == "BUY":
+            current_price = Decimal(str(current.get("price") or "0"))
+            additional_amount = max(
+                Decimal("0"),
+                proposed_amount - (current_quantity * current_price),
+            )
+            if additional_amount == 0:
+                return
+            currency = cast(Literal["KRW", "USD"], current["currency"])
+            availability = self._mapping_data(
+                await self.get_buying_power(currency),
+                "buying power",
+            )
+            buying_power = Decimal(str(availability["cashBuyingPower"]))
+            if additional_amount > buying_power:
+                raise TossInvestError(
+                    "Additional modification amount exceeds current buying power",
+                    code="insufficient-buying-power-preview",
+                    data={
+                        "additional_amount": str(additional_amount),
+                        "buying_power": str(buying_power),
+                        "currency": currency,
+                    },
+                )
+            return
+
+        additional_quantity = max(
+            Decimal("0"),
+            proposed_quantity - current_quantity,
+        )
+        if additional_quantity == 0:
+            return
+        availability = self._mapping_data(
+            await self.get_sellable_quantity(str(current["symbol"])),
+            "sellable quantity",
+        )
+        sellable = Decimal(str(availability["sellableQuantity"]))
+        if additional_quantity > sellable:
+            raise TossInvestError(
+                "Additional modification quantity exceeds currently sellable quantity",
+                code="insufficient-sellable-quantity-preview",
+                data={
+                    "additional_quantity": str(additional_quantity),
+                    "sellable_quantity": str(sellable),
+                },
+            )
 
     async def _operation_with_order_detail(self, operation: dict[str, Any]) -> dict[str, Any]:
         data = self._mapping_data(operation, "order operation")
@@ -534,17 +743,29 @@ class TossInvestService:
             )
         return data[0]
 
-    @staticmethod
-    def _confirmation_phrase(operation: str, symbol: str, side: str) -> str:
-        nonce = secrets.token_hex(3).upper()
-        return f"CONFIRM {operation} {side} {symbol} {nonce}"
+    async def get_preview(self, preview_id: str) -> Preview:
+        self._ensure_trading_enabled()
+        return await self.previews.get(preview_id)
 
-    @staticmethod
-    def _preview_response(preview: Preview, summary: dict[str, Any]) -> dict[str, Any]:
+    async def approve_preview(self, preview_id: str) -> Preview:
+        self._ensure_trading_enabled()
+        return await self.previews.approve(preview_id)
+
+    async def record_approval_failure(self, preview_id: str) -> None:
+        self._ensure_trading_enabled()
+        await self.previews.record_approval_failure(preview_id)
+
+    def _preview_response(self, preview: Preview) -> dict[str, Any]:
+        approval_base_url = self.settings.tossinvest_approval_base_url.rstrip("/")
         return {
             "preview_id": preview.preview_id,
             "expires_in_seconds": 120,
-            "confirmation_phrase": preview.confirmation_phrase,
-            "summary": summary,
-            "warning": "Review every field. The confirmation is one-time and expires in 2 minutes.",
+            "expires_at": preview.expires_at_iso,
+            "approval_url": f"{approval_base_url}/approvals/{preview.preview_id}",
+            "summary": preview.summary,
+            "status": "pending_human_approval",
+            "warning": (
+                "A human must approve this exact preview through the separate approval page. "
+                "The MCP client cannot approve it. The preview expires in 2 minutes."
+            ),
         }

@@ -1,13 +1,7 @@
 ---
 name: tossinvest
-description: Use when inspecting Toss Securities market or account data, or when safely previewing and confirming stock orders through the TossInvest MCP server.
-version: 0.1.0
-author: cha2hyun
+description: Use when reading official Toss Securities market, stock, calendar, exchange-rate, commission, holding, buying-power, sellable-quantity, or order-status data through the TossInvest MCP server. Use tossinvest-trading instead when the user explicitly requests an order create, modification, or cancellation.
 license: MIT
-platforms:
-  - linux
-  - macos
-  - windows
 metadata:
   hermes:
     category: finance
@@ -16,103 +10,46 @@ metadata:
       - Stocks
       - Toss-Securities
       - MCP
-    related_skills: []
+    related_skills:
+      - tossinvest-trading
     requires_tools:
       - mcp_tossinvest_get_prices
 ---
 
-# TossInvest Skill
+# TossInvest Read Workflows
 
-Use the TossInvest MCP server for official Korean and US stock market data, account inspection,
-and explicitly enabled trading.
+Use the TossInvest MCP server as the authoritative source for the configured Toss Securities
+account and supported Korean or US market data. Hermes may prefix tool names with
+`mcp_tossinvest_`; names below omit that prefix.
 
-Hermes registers the tools with an `mcp_tossinvest_` prefix. Tool names below omit that prefix for
-readability.
+## Safety
 
-## When to Use
+1. Treat prices, balances, market sessions, and order states as time-sensitive.
+2. State the response retrieval time when it affects the answer.
+3. Never request or reveal the Toss client secret, OAuth token, MCP token, approval credential,
+   account sequence, or raw account number.
+4. Never infer a trade from analysis, comparison, alerts, or portfolio discussion.
+5. Do not claim that market data is guaranteed, settled, profitable, or investment advice.
+6. Keep KRW and USD separate unless the user asks for conversion; then call `get_exchange_rate`
+   and state the rate used.
 
-- The user asks for Toss Securities market, holding, buying-power, or order data.
-- The user explicitly asks to create, modify, or cancel an order through Toss Securities.
-- A workflow needs the official Toss market calendar, exchange rate, warnings, or commissions.
+## Select tools economically
 
-Do not use this skill for generic investment advice when no TossInvest MCP data is needed.
+- For a simple current-price request, call `get_prices` directly.
+- Call `get_stock_info` when symbol identity, market, security type, or currency is ambiguous.
+- Add `get_orderbook`, `get_recent_trades`, or `get_candles` only when the requested analysis needs
+  them.
+- Call `get_stock_warnings` before discussing trading restrictions or a possible purchase.
+- Call `get_market_calendar` before reasoning about whether a market session is open.
+- Use `get_holdings`, `get_buying_power`, or `get_sellable_quantity` for account availability.
+- Use `list_orders`, then `get_order` when an exact order state or execution detail is needed.
+- Use `get_commissions` instead of estimating fees from memory.
 
-## Prerequisites
+## Report results
 
-- The TossInvest MCP server is running and authenticated.
-- Hermes has the server configured with the name `tossinvest`.
-- Read-only tools are allowlisted; trading tools are allowlisted only when trading is intended.
-
-## How to Run
-
-Load the skill with `/tossinvest`, or ask Hermes to use the TossInvest skill. Verify the integration
-before relying on it:
-
-```bash
-hermes mcp test tossinvest
-hermes skills list | grep tossinvest
-```
-
-## Safety rules
-
-1. Treat all market values as time-sensitive and state their retrieval time.
-2. Never claim that data or an order is guaranteed, settled, or profitable.
-3. Never request or reveal the Toss client secret, access token, MCP token, or account sequence.
-4. Prefer read-only tools. Do not infer that the user wants a trade from analysis or discussion.
-5. A trade requires an explicit user instruction naming the side, symbol, order type, and amount.
-6. Never call an execution tool without showing the complete preview to the user and obtaining an
-   explicit confirmation of that exact preview.
-7. Pass the exact confirmation phrase returned by the preview. Never invent or alter it.
-8. If a tool returns `order-state-unknown`, do not retry. Call `list_orders` and `get_order` first.
-9. Do not split an order to evade configured limits or the KRW 100 million hard block.
-
-## Read workflow
-
-For market analysis:
-
-1. Call `get_stock_info` to confirm symbol, market, security type, and currency.
-2. Call `get_prices`; add `get_orderbook`, `get_recent_trades`, or `get_candles` only as needed.
-3. Call `get_stock_warnings` before discussing a possible purchase.
-4. Call `get_market_calendar` before reasoning about whether an order can be accepted now.
-
-For account questions:
-
-1. Use `get_holdings`, `get_buying_power`, or `get_sellable_quantity`.
-2. Use `list_orders` and then `get_order` for exact status.
-3. Explain currency explicitly and do not sum KRW and USD without an exchange-rate conversion.
-
-## Trading workflow
-
-### Create
-
-1. Confirm stock information, warnings, market calendar, and buying power or sellable quantity.
-2. Call `preview_order`.
-3. Present symbol, side, type, quantity or amount, price, currency, estimated KRW value, warnings,
-   and expiry.
-4. Ask the user to confirm that exact preview.
-5. Only after confirmation, call `place_order` with the preview ID and exact phrase.
-6. Report the returned order detail and status.
-
-### Modify or cancel
-
-1. Call `get_order` first.
-2. Call the matching preview tool.
-3. Present the current order and proposed change or cancellation.
-4. Obtain explicit confirmation.
-5. Call the matching execution tool once.
-6. Report the newly returned order ID and latest status.
-
-## Pitfalls
-
-- `list_accounts` returns redacted account metadata, not raw account numbers or account sequences.
-- KRW and USD balances cannot be added without an explicit exchange-rate conversion.
-- A market-order preview is an estimate; the actual execution price can move.
-- An expired preview requires a new preview. Never reuse an old confirmation phrase.
-- A successful write followed by a failed detail lookup must not be repeated.
-
-## Verification
-
-- `get_prices` returns data and retrieval metadata.
-- Trading tools are absent when trading is disabled.
-- A write tool rejects a missing, expired, reused, or incorrect confirmation.
-- `order-state-unknown` leads to order-history inspection, never an automatic retry.
+- Preserve the response currency, timestamp, and request ID when relevant.
+- Explain that `list_accounts` intentionally returns redacted metadata.
+- Distinguish order group filters (`OPEN` or `CLOSED`) from each order's detailed status.
+- If `CLOSED` history is unavailable upstream, report that limitation instead of inventing results.
+- If the user explicitly requests an order action, switch to `tossinvest-trading`; do not improvise
+  a trading workflow here.

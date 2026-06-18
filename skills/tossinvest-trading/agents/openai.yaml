@@ -1,0 +1,4 @@
+interface:
+  display_name: "TossInvest Trading"
+  short_description: "Safely preview and execute Toss Securities orders"
+  default_prompt: "Use $tossinvest-trading to safely preview and execute an explicitly requested Toss Securities order."

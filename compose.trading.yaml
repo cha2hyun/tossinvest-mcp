@@ -1,0 +1,5 @@
+services:
+  tossinvest-mcp:
+    command:
+      - tossinvest-mcp
+      - --dangerously-enable-trading

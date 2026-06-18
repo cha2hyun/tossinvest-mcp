@@ -35,20 +35,42 @@ async def test_every_official_operation_maps_to_an_implementation(
     assert mapped_tools == registered
 
 
-def test_hermes_skill_has_supported_metadata_and_installable_shape() -> None:
-    path = ROOT / "skills" / "tossinvest" / "SKILL.md"
+@pytest.mark.parametrize(
+    ("skill_name", "required_tools", "body_marker"),
+    [
+        (
+            "tossinvest",
+            ["mcp_tossinvest_get_prices"],
+            "# TossInvest Read Workflows",
+        ),
+        (
+            "tossinvest-trading",
+            [
+                "mcp_tossinvest_preview_order",
+                "mcp_tossinvest_place_order",
+            ],
+            "# TossInvest Trading",
+        ),
+    ],
+)
+def test_hermes_skills_have_supported_metadata_and_installable_shape(
+    skill_name: str,
+    required_tools: list[str],
+    body_marker: str,
+) -> None:
+    path = ROOT / "skills" / skill_name / "SKILL.md"
     content = path.read_text(encoding="utf-8")
     assert content.startswith("---\n")
     _, frontmatter, body = content.split("---", 2)
     metadata = yaml.safe_load(frontmatter)
 
-    assert metadata["name"] == "tossinvest"
-    assert metadata["description"].startswith("Use when ")
-    assert metadata["author"] == "cha2hyun"
+    assert set(metadata) <= {"name", "description", "license", "metadata"}
+    assert metadata["name"] == skill_name
+    assert metadata["description"].startswith("Use ")
     assert metadata["license"] == "MIT"
     hermes = metadata["metadata"]["hermes"]
     assert hermes["category"] == "finance"
     assert hermes["tags"]
-    assert hermes["requires_tools"] == ["mcp_tossinvest_get_prices"]
-    assert "# TossInvest Skill" in body
-    assert "## Verification" in body
+    assert hermes["requires_tools"] == required_tools
+    assert body_marker in body
+    assert "TODO" not in body
