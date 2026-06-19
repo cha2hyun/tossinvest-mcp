@@ -58,3 +58,7 @@ python_version = "3.12"
 strict = true
 packages = ["tossinvest_mcp"]
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true

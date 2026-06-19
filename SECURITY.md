@@ -1,87 +1,68 @@
 # Security Policy
 
-## Supported versions
+## Reporting
 
-Security fixes are provided for the latest released minor version. Users should pin a reviewed
-SemVer container tag and update after reviewing release notes instead of relying indefinitely on
-`latest`.
+Do not open a public issue for credential exposure, authentication bypass, order-safety bypass, or
+unexpected live-order execution. Report privately to `cha2hyun.dev@gmail.com` with the affected
+version, deployment mode, impact, sanitized request IDs, and minimal reproduction steps.
 
-## Reporting a vulnerability
-
-Do not open a public issue for credential exposure, authentication bypass, order-safety bypass,
-unexpected live-order execution, or another exploitable vulnerability.
-
-Report privately to `cha2hyun.dev@gmail.com` with:
-
-- affected version or commit
-- deployment mode
-- impact and prerequisites
-- minimal reproduction steps
-- relevant request IDs with credentials removed
-
-Do not include real Toss credentials, MCP tokens, approval tokens, account numbers, or access
-tokens. The project will acknowledge reports when possible, investigate impact, and coordinate a
-fix and disclosure appropriate to the risk.
+Never include real Toss credentials, request headers, account values, access tokens, or approval
+tokens.
 
 ## Threat model
 
-The server assumes:
+The host, container runtime, reverse proxy, and administrator are trusted. The MCP client or model
+may make incorrect or adversarial tool choices. Upstream state can change between preview and
+execution, and a network failure can leave a dispatched order in an unknown state.
 
-- the host, container runtime, and administrator are trusted
-- the MCP client or agent may make incorrect or adversarial tool choices
-- upstream market and account data may change between preview and execution
-- network failures may leave a dispatched order in an unknown state
-- browser requests may be cross-origin or automated
+The server cannot protect in-memory credentials from a host administrator, Docker daemon access,
+kernel compromise, arbitrary process inspection, or code execution inside the server process.
 
-The server does not protect secrets from a host administrator, a user with Docker daemon access,
-kernel compromise, or arbitrary code execution inside the server process. Those actors can inspect
-process environment or memory.
+## Credential boundary
 
-## Credential boundaries
+- The server `.env` and container environment must not contain Toss client credentials or account
+  sequence values.
+- The MCP client sends credentials as private `X-Tossinvest-*` request headers.
+- Request headers are not MCP tool arguments, resources, prompts, or schemas.
+- Authentication contexts, OAuth tokens, rate limits, clients, and previews are isolated by a
+  one-way credential fingerprint and expire from memory.
+- Credential and account fields are redacted from normalized upstream responses and errors.
+- The original human approval token remains outside both server and MCP client configuration. Only
+  its SHA-256 digest is sent in trading-mode headers.
 
-- The server process necessarily uses the Toss client secret and MCP authentication token.
-- MCP tools, resources, prompts, schemas, errors, and normalized responses must not expose those
-  values.
-- `MCP_AUTH_TOKEN` must differ from `TOSSINVEST_CLIENT_SECRET`.
-- The human approval token must differ from both and remain outside server and Hermes
-  configuration.
-- The server stores only `TOSSINVEST_APPROVAL_TOKEN_SHA256`, never the original approval token.
-- Do not grant an agent shell, filesystem, Docker, secret-manager, or process-inspection access to
-  the server's credential boundary.
+Do not grant the model shell, filesystem, Docker, proxy administration, secret-manager, packet
+capture, or process-inspection access to this credential boundary.
 
-## Deployment requirements
+## HTTPS and logging requirements
 
-- Keep the published port bound to `127.0.0.1` unless an authenticated HTTPS reverse proxy and
-  network access controls protect it.
-- Use a secret manager or a private, permission-restricted `.env`.
-- Use unpredictable credentials and rotate any value that may have leaked.
-- Restrict Hermes with an explicit tool allowlist.
-- Leave `--dangerously-enable-trading` absent unless live trading is intentionally required.
-- Start with low KRW and USD order limits.
-- Keep the approval URL on loopback or HTTPS.
-- Run one server worker and one instance unless preview state is moved to a safe shared store.
-- Restrict external access to `/healthz`, `/readyz`, and `/approvals/*`.
-- Preserve the non-root, read-only filesystem, dropped capabilities, and no-new-privileges Compose
-  controls.
+- Public plain HTTP is forbidden. The application returns `426 https-required` unless the peer and
+  requested host are both loopback.
+- Public deployments must terminate TLS at a trusted reverse proxy and preserve the original
+  request scheme for Uvicorn.
+- Put only trusted reverse-proxy addresses in `MCP_TRUSTED_PROXY_IPS`; never trust forwarded
+  headers from arbitrary clients.
+- Redact or drop `X-Tossinvest-*`, `Authorization`, cookies, form bodies, and request/response body
+  dumps from reverse-proxy, gateway, WAF, APM, and exception logs.
+- Uvicorn access logs are disabled by default.
+- Responses use `Cache-Control: no-store`; HTTPS responses use HSTS.
+- Restrict `/healthz`, `/readyz`, and `/approvals/*` externally.
 
-## Order safety invariants
+## Order invariants
 
-- Trading tools are not registered without the explicit dangerous process argument.
-- A write requires an unexpired, externally approved, single-use preview.
+- Trading tools do not exist without `--dangerously-enable-trading`.
+- Every write requires an unexpired, externally approved, single-use preview.
 - Price, exchange rate, availability, order state, and configured limits are revalidated before
   dispatch.
-- Writes are never automatically retried, including after token expiry, rate limits, timeout,
-  network failure, or upstream 5xx responses.
+- Writes are never retried after token expiry, rate limits, timeout, network failure, or upstream
+  errors.
 - `order-state-unknown` requires order-history inspection before any further write.
 - Orders must not be split to evade configured or hard limits.
 
 ## Incident response
 
-If credential exposure or unexpected order activity is suspected:
-
-1. Stop the MCP server.
-2. Revoke or rotate the Toss API client credentials and MCP token.
-3. Replace the human approval token and update only its stored SHA-256 digest.
-4. Inspect Toss order history directly through a trusted interface.
-5. Preserve sanitized logs and request IDs.
-6. Review host, Docker, reverse-proxy, Hermes, and secret-manager access.
+1. Stop the MCP server and block public access.
+2. Revoke or rotate the Toss API client credentials.
+3. Replace the human approval token and its digest.
+4. Inspect Toss order history through a trusted interface.
+5. Purge or secure proxy, gateway, APM, and application logs containing leaked values.
+6. Review host, Docker, reverse-proxy, and MCP-client access.

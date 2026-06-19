@@ -3,13 +3,16 @@ services:
     build:
       context: .
     image: ghcr.io/cha2hyun/tossinvest-mcp:latest
-    env_file:
-      - ${ENV_FILE:-.env}
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8000"
+      MCP_PUBLISHED_HOST: "${MCP_PUBLISHED_HOST:-127.0.0.1}"
+      MCP_TENANT_CACHE_SIZE: "${MCP_TENANT_CACHE_SIZE:-100}"
+      MCP_TENANT_CACHE_TTL: "${MCP_TENANT_CACHE_TTL:-3600}"
+      MCP_TRUSTED_PROXY_IPS: "${MCP_TRUSTED_PROXY_IPS:-127.0.0.1}"
+      TOSSINVEST_APPROVAL_BASE_URL: "${TOSSINVEST_APPROVAL_BASE_URL:-http://127.0.0.1:8000}"
     ports:
-      - "127.0.0.1:${MCP_PUBLISHED_PORT:-8000}:8000"
+      - "${MCP_PUBLISHED_HOST:-127.0.0.1}:${MCP_PUBLISHED_PORT:-8000}:8000"
     init: true
     restart: unless-stopped
     read_only: true

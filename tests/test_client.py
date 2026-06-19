@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -18,11 +19,14 @@ class NoopRateLimiter(RateLimiter):
 
 
 def make_http_client(
-    handler: Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]],
+    handler: Callable[
+        [httpx.Request],
+        httpx.Response | Coroutine[Any, Any, httpx.Response],
+    ],
 ) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         base_url="https://openapi.test",
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(cast(Any, handler)),
     )
 
 
@@ -61,6 +65,148 @@ async def test_oauth_token_is_cached_and_account_header_is_applied(
 
     assert token_calls == 1
     assert account_headers == ["1", "1"]
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_single_account_is_discovered_after_oauth_without_sequence(
+    settings: Settings,
+) -> None:
+    values = settings.model_dump()
+    values["tossinvest_account_seq"] = None
+    values["tossinvest_account_index"] = None
+    automatic_settings = Settings(**values)
+    account_headers: list[str | None] = []
+    account_list_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal account_list_calls
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={"access_token": "access-token", "expires_in": 3600},
+            )
+        if request.url.path == "/api/v1/accounts":
+            account_list_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "result": [
+                        {
+                            "accountSeq": 7,
+                            "accountNo": "1234567890",
+                            "accountType": "BROKERAGE",
+                        }
+                    ]
+                },
+            )
+        account_headers.append(request.headers.get("X-Tossinvest-Account"))
+        return httpx.Response(200, json={"result": {"ok": True}})
+
+    http = make_http_client(handler)
+    client = TossInvestClient(
+        automatic_settings,
+        http_client=http,
+        rate_limiter=NoopRateLimiter(),
+    )
+
+    await client.request("GET", "/api/v1/holdings", group="ASSET", account_required=True)
+    await client.request("GET", "/api/v1/holdings", group="ASSET", account_required=True)
+
+    assert account_list_calls == 1
+    assert account_headers == ["7", "7"]
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_multiple_accounts_require_non_secret_account_index(
+    settings: Settings,
+) -> None:
+    values = settings.model_dump()
+    values["tossinvest_account_seq"] = None
+    values["tossinvest_account_index"] = None
+    automatic_settings = Settings(**values)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={"access_token": "access-token", "expires_in": 3600},
+            )
+        if request.url.path == "/api/v1/accounts":
+            return httpx.Response(
+                200,
+                json={
+                    "result": [
+                        {"accountSeq": 7, "accountType": "BROKERAGE"},
+                        {"accountSeq": 9, "accountType": "ISA"},
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url.path}")
+
+    http = make_http_client(handler)
+    client = TossInvestClient(
+        automatic_settings,
+        http_client=http,
+        rate_limiter=NoopRateLimiter(),
+    )
+
+    with pytest.raises(TossInvestError) as exc_info:
+        await client.request(
+            "GET",
+            "/api/v1/holdings",
+            group="ASSET",
+            account_required=True,
+        )
+
+    assert exc_info.value.code == "account-selection-required"
+    assert exc_info.value.data["accounts"] == [
+        {"account_index": 1, "account_type": "BROKERAGE"},
+        {"account_index": 2, "account_type": "ISA"},
+    ]
+    assert "accountSeq" not in str(exc_info.value.as_dict())
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_account_index_selects_from_discovered_accounts(settings: Settings) -> None:
+    values = settings.model_dump()
+    values["tossinvest_account_seq"] = None
+    values["tossinvest_account_index"] = 2
+    automatic_settings = Settings(**values)
+    selected_header: str | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal selected_header
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={"access_token": "access-token", "expires_in": 3600},
+            )
+        if request.url.path == "/api/v1/accounts":
+            return httpx.Response(
+                200,
+                json={
+                    "result": [
+                        {"accountSeq": 7, "accountType": "BROKERAGE"},
+                        {"accountSeq": 9, "accountType": "ISA"},
+                    ]
+                },
+            )
+        selected_header = request.headers.get("X-Tossinvest-Account")
+        return httpx.Response(200, json={"result": {"ok": True}})
+
+    http = make_http_client(handler)
+    client = TossInvestClient(
+        automatic_settings,
+        http_client=http,
+        rate_limiter=NoopRateLimiter(),
+    )
+
+    await client.request("GET", "/api/v1/holdings", group="ASSET", account_required=True)
+
+    assert selected_header == "9"
     await http.aclose()
 
 

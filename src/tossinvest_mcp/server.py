@@ -13,7 +13,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import date as Date
 from datetime import datetime as DateTime
-from typing import Annotated, Any, Literal
+from ipaddress import ip_address
+from typing import Annotated, Any, Literal, cast, overload
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -25,10 +26,11 @@ from pydantic import Field, TypeAdapter
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from tossinvest_mcp.client import TossInvestClient
+from tossinvest_mcp.client import TossInvestClientLike
 from tossinvest_mcp.errors import TossInvestError
+from tossinvest_mcp.logging_utils import redact_sensitive_values
 from tossinvest_mcp.models import (
     ApiResponse,
     OrderExecutionResponse,
@@ -38,6 +40,7 @@ from tossinvest_mcp.models import (
 )
 from tossinvest_mcp.service import TossInvestService
 from tossinvest_mcp.settings import Settings
+from tossinvest_mcp.tenants import TenantServiceRegistry
 
 Symbol = Annotated[
     str,
@@ -166,26 +169,95 @@ class OriginValidationMiddleware:
         await self.app(scope, receive, send)
 
 
+class TransportSecurityMiddleware:
+    """Require HTTPS except for requests addressed directly over loopback."""
+
+    def __init__(self, app: ASGIApp, allow_loopback_http: bool = True) -> None:
+        self.app = app
+        self.allow_loopback_http = allow_loopback_http
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        is_https = scope.get("scheme") == "https"
+        if not is_https and not _allow_plain_http(
+            scope,
+            allow_published_loopback=self.allow_loopback_http,
+        ):
+            response = JSONResponse(
+                {"error": "https-required"},
+                status_code=426,
+                headers={"Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send)
+            return
+
+        async def send_with_security_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"cache-control", b"no-store"))
+                if is_https:
+                    headers.append(
+                        (
+                            b"strict-transport-security",
+                            b"max-age=31536000",
+                        )
+                    )
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
+
+
+@overload
 def create_mcp(
     settings: Settings,
     *,
-    client: TossInvestClient | None = None,
-) -> tuple[FastMCP, TossInvestService]:
-    toss_client = client or TossInvestClient(settings)
-    service = TossInvestService(settings, toss_client)
+    client: TossInvestClientLike,
+) -> tuple[FastMCP, TossInvestService]: ...
+
+
+@overload
+def create_mcp(
+    settings: Settings,
+    *,
+    client: None = None,
+) -> tuple[FastMCP, TenantServiceRegistry]: ...
+
+
+def create_mcp(
+    settings: Settings,
+    *,
+    client: TossInvestClientLike | None = None,
+) -> tuple[FastMCP, TossInvestService | TenantServiceRegistry]:
+    static_service: TossInvestService | None = None
+    registry: TenantServiceRegistry | None = None
+    if client is not None:
+        static_service = TossInvestService(settings, client)
+    else:
+        registry = TenantServiceRegistry(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[dict[str, Any]]:
-        yield {"service": service}
-        await toss_client.aclose()
+        yield {"service": static_service, "tenant_registry": registry}
+        if static_service is not None:
+            await static_service.client.aclose()
+        if registry is not None:
+            await registry.close()
 
-    verifier = StaticTokenVerifier(
-        tokens={
-            settings.mcp_auth_token.get_secret_value(): {
-                "client_id": "hermes-agent",
-                "scopes": ["tossinvest"],
+    verifier = (
+        StaticTokenVerifier(
+            tokens={
+                settings.mcp_auth_token.get_secret_value(): {
+                    "client_id": "mcp-client",
+                    "scopes": ["tossinvest"],
+                }
             }
-        }
+        )
+        if settings.mcp_auth_token is not None
+        else None
     )
     mcp = FastMCP(
         name="TossInvest",
@@ -203,11 +275,32 @@ def create_mcp(
         strict_input_validation=True,
     )
 
+    async def resolve_service() -> TossInvestService:
+        if static_service is not None:
+            return static_service
+        assert registry is not None
+        return await registry.current_service()
+
     async def tool_call(call: Awaitable[dict[str, Any]]) -> dict[str, Any]:
         try:
-            return await call
+            return cast(dict[str, Any], redact_sensitive_values(await call))
         except TossInvestError as exc:
             raise ToolError(json.dumps(exc.as_dict(), ensure_ascii=False)) from exc
+
+    async def resolve_tool_service() -> TossInvestService:
+        try:
+            return await resolve_service()
+        except TossInvestError as exc:
+            raise ToolError(json.dumps(exc.as_dict(), ensure_ascii=False)) from exc
+
+    async def service_call(
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        service = await resolve_tool_service()
+        method = getattr(service, method_name)
+        return await tool_call(method(*args, **kwargs))
 
     @mcp.tool(
         tags={"market", "read"},
@@ -216,7 +309,7 @@ def create_mcp(
     )
     async def get_stock_info(symbols: Symbols) -> dict[str, Any]:
         """Return official stock master information for up to 200 comma-separated symbols."""
-        return await tool_call(service.get_stock_info(symbols))
+        return await service_call("get_stock_info", symbols)
 
     @mcp.tool(
         tags={"market", "read"},
@@ -225,7 +318,7 @@ def create_mcp(
     )
     async def get_stock_warnings(symbol: Symbol) -> dict[str, Any]:
         """Return trading warnings and restrictions for a stock."""
-        return await tool_call(service.get_stock_warnings(symbol))
+        return await service_call("get_stock_warnings", symbol)
 
     @mcp.tool(
         tags={"market", "read"},
@@ -234,7 +327,7 @@ def create_mcp(
     )
     async def get_prices(symbols: Symbols) -> dict[str, Any]:
         """Return current prices for up to 200 comma-separated symbols."""
-        return await tool_call(service.get_prices(symbols))
+        return await service_call("get_prices", symbols)
 
     @mcp.tool(
         tags={"market", "read"},
@@ -243,7 +336,7 @@ def create_mcp(
     )
     async def get_orderbook(symbol: Symbol) -> dict[str, Any]:
         """Return the current order book for a stock."""
-        return await tool_call(service.get_orderbook(symbol))
+        return await service_call("get_orderbook", symbol)
 
     @mcp.tool(
         tags={"market", "read"},
@@ -258,7 +351,7 @@ def create_mcp(
         ] = 50,
     ) -> dict[str, Any]:
         """Return up to 50 recent trades for a stock."""
-        return await tool_call(service.get_recent_trades(symbol, count))
+        return await service_call("get_recent_trades", symbol, count)
 
     @mcp.tool(
         tags={"market", "read"},
@@ -267,7 +360,7 @@ def create_mcp(
     )
     async def get_price_limits(symbol: Symbol) -> dict[str, Any]:
         """Return upper and lower price limits for a stock."""
-        return await tool_call(service.get_price_limits(symbol))
+        return await service_call("get_price_limits", symbol)
 
     @mcp.tool(
         tags={"market", "read"},
@@ -294,14 +387,13 @@ def create_mcp(
         ] = True,
     ) -> dict[str, Any]:
         """Return minute or daily OHLCV candles."""
-        return await tool_call(
-            service.get_candles(
-                symbol,
-                interval,
-                count,
-                before.isoformat() if before is not None else None,
-                adjusted,
-            )
+        return await service_call(
+            "get_candles",
+            symbol,
+            interval,
+            count,
+            before.isoformat() if before is not None else None,
+            adjusted,
         )
 
     @mcp.tool(
@@ -324,12 +416,11 @@ def create_mcp(
         ] = None,
     ) -> dict[str, Any]:
         """Return the KRW/USD exchange rate, optionally at a specific ISO 8601 time."""
-        return await tool_call(
-            service.get_exchange_rate(
-                base_currency,
-                quote_currency,
-                date_time.isoformat() if date_time is not None else None,
-            )
+        return await service_call(
+            "get_exchange_rate",
+            base_currency,
+            quote_currency,
+            date_time.isoformat() if date_time is not None else None,
         )
 
     @mcp.tool(
@@ -348,11 +439,10 @@ def create_mcp(
         ] = None,
     ) -> dict[str, Any]:
         """Return Korean or US market sessions for a date."""
-        return await tool_call(
-            service.get_market_calendar(
-                market,
-                date.isoformat() if date is not None else None,
-            )
+        return await service_call(
+            "get_market_calendar",
+            market,
+            date.isoformat() if date is not None else None,
         )
 
     @mcp.tool(
@@ -362,7 +452,7 @@ def create_mcp(
     )
     async def list_accounts() -> dict[str, Any]:
         """List Toss Securities accounts available to the configured API client."""
-        return await tool_call(service.list_accounts())
+        return await service_call("list_accounts")
 
     @mcp.tool(
         tags={"account", "read"},
@@ -371,7 +461,7 @@ def create_mcp(
     )
     async def get_holdings(symbol: Symbol | None = None) -> dict[str, Any]:
         """Return holdings for the configured account, optionally filtered by symbol."""
-        return await tool_call(service.get_holdings(symbol))
+        return await service_call("get_holdings", symbol)
 
     @mcp.tool(
         tags={"order-history", "read"},
@@ -411,15 +501,14 @@ def create_mcp(
         ] = 20,
     ) -> dict[str, Any]:
         """List open or closed orders for the configured account."""
-        return await tool_call(
-            service.list_orders(
-                status,
-                symbol,
-                from_date.isoformat() if from_date is not None else None,
-                to_date.isoformat() if to_date is not None else None,
-                cursor,
-                limit,
-            )
+        return await service_call(
+            "list_orders",
+            status,
+            symbol,
+            from_date.isoformat() if from_date is not None else None,
+            to_date.isoformat() if to_date is not None else None,
+            cursor,
+            limit,
         )
 
     @mcp.tool(
@@ -429,7 +518,7 @@ def create_mcp(
     )
     async def get_order(order_id: OrderId) -> dict[str, Any]:
         """Return one order and its latest execution state."""
-        return await tool_call(service.get_order(order_id))
+        return await service_call("get_order", order_id)
 
     @mcp.tool(
         tags={"account", "read"},
@@ -443,7 +532,7 @@ def create_mcp(
         ],
     ) -> dict[str, Any]:
         """Return cash buying power in KRW or USD."""
-        return await tool_call(service.get_buying_power(currency))
+        return await service_call("get_buying_power", currency)
 
     @mcp.tool(
         tags={"account", "read"},
@@ -452,7 +541,7 @@ def create_mcp(
     )
     async def get_sellable_quantity(symbol: Symbol) -> dict[str, Any]:
         """Return the currently sellable quantity for a stock."""
-        return await tool_call(service.get_sellable_quantity(symbol))
+        return await service_call("get_sellable_quantity", symbol)
 
     @mcp.tool(
         tags={"account", "read"},
@@ -461,7 +550,7 @@ def create_mcp(
     )
     async def get_commissions() -> dict[str, Any]:
         """Return Korean and US trading commission information."""
-        return await tool_call(service.get_commissions())
+        return await service_call("get_commissions")
 
     approval_attempts = ApprovalAttemptLimiter()
     global_approval_attempts = ApprovalAttemptLimiter(limit=100)
@@ -501,7 +590,11 @@ def create_mcp(
                 order_amount=order_amount,
                 time_in_force=time_in_force,
             )
-            return await tool_call(service.preview_order(request))
+            service = await resolve_tool_service()
+            result = await tool_call(service.preview_order(request))
+            if registry is not None:
+                await registry.register_preview(str(result["preview_id"]), service)
+            return result
 
         @mcp.tool(
             tags={"trading", "write"},
@@ -510,7 +603,7 @@ def create_mcp(
         )
         async def place_order(preview_id: PreviewId) -> dict[str, Any]:
             """Submit a human-approved order preview. Unapproved previews are rejected."""
-            return await tool_call(service.place_order(preview_id))
+            return await service_call("place_order", preview_id)
 
         @mcp.tool(
             tags={"trading", "preview"},
@@ -533,7 +626,11 @@ def create_mcp(
                 quantity=quantity,
                 price=price,
             )
-            return await tool_call(service.preview_order_modification(request))
+            service = await resolve_tool_service()
+            result = await tool_call(service.preview_order_modification(request))
+            if registry is not None:
+                await registry.register_preview(str(result["preview_id"]), service)
+            return result
 
         @mcp.tool(
             tags={"trading", "write"},
@@ -542,7 +639,7 @@ def create_mcp(
         )
         async def modify_order(preview_id: PreviewId) -> dict[str, Any]:
             """Submit a human-approved order modification preview."""
-            return await tool_call(service.modify_order(preview_id))
+            return await service_call("modify_order", preview_id)
 
         @mcp.tool(
             tags={"trading", "preview"},
@@ -551,7 +648,11 @@ def create_mcp(
         )
         async def preview_order_cancellation(order_id: OrderId) -> dict[str, Any]:
             """Preview cancellation of an existing order; this does not submit it."""
-            return await tool_call(service.preview_order_cancellation(order_id))
+            service = await resolve_tool_service()
+            result = await tool_call(service.preview_order_cancellation(order_id))
+            if registry is not None:
+                await registry.register_preview(str(result["preview_id"]), service)
+            return result
 
         @mcp.tool(
             tags={"trading", "write"},
@@ -560,7 +661,7 @@ def create_mcp(
         )
         async def cancel_order(preview_id: PreviewId) -> dict[str, Any]:
             """Submit a human-approved order cancellation preview."""
-            return await tool_call(service.cancel_order(preview_id))
+            return await service_call("cancel_order", preview_id)
 
         @mcp.custom_route(
             "/approvals/{preview_id}",
@@ -570,6 +671,11 @@ def create_mcp(
         async def review_approval(request: Request) -> Response:
             preview_id = request.path_params["preview_id"]
             try:
+                if static_service is not None:
+                    service = static_service
+                else:
+                    assert registry is not None
+                    service = await registry.service_for_preview(preview_id)
                 preview = await service.get_preview(preview_id)
             except TossInvestError as exc:
                 return HTMLResponse(
@@ -589,6 +695,18 @@ def create_mcp(
         )
         async def submit_approval(request: Request) -> Response:
             preview_id = request.path_params["preview_id"]
+            try:
+                if static_service is not None:
+                    service = static_service
+                else:
+                    assert registry is not None
+                    service = await registry.service_for_preview(preview_id)
+            except TossInvestError as exc:
+                return HTMLResponse(
+                    _approval_error_page(str(exc)),
+                    status_code=404,
+                    headers=_approval_headers(),
+                )
             client_key = request.client.host if request.client is not None else "unknown"
             if not await global_approval_attempts.allow(
                 "global"
@@ -609,7 +727,7 @@ def create_mcp(
             form = await request.form()
             supplied_token = str(form.get("approval_token", ""))
             decision = str(form.get("decision", ""))
-            configured_hash = settings.tossinvest_approval_token_sha256
+            configured_hash = service.settings.tossinvest_approval_token_sha256
             supplied_hash = hashlib.sha256(supplied_token.encode()).hexdigest()
             if (
                 not 24 <= len(supplied_token) <= 512
@@ -650,13 +768,23 @@ def create_mcp(
 
     @mcp.custom_route("/readyz", methods=["GET"], include_in_schema=False)
     async def readiness(_: Request) -> Response:
-        ready = await toss_client.is_ready()
+        if static_service is None:
+            return JSONResponse(
+                {
+                    "status": "ready",
+                    "credential_mode": "request-headers",
+                }
+            )
+        ready = await static_service.client.is_ready()
         return JSONResponse(
             {"status": "ready" if ready else "not-ready"},
             status_code=200 if ready else 503,
         )
 
-    return mcp, service
+    if static_service is not None:
+        return mcp, static_service
+    assert registry is not None
+    return mcp, registry
 
 
 def _approval_review_page(
@@ -666,7 +794,13 @@ def _approval_review_page(
 ) -> str:
     safe_preview_id = html.escape(preview_id)
     safe_kind = html.escape(kind)
-    safe_summary = html.escape(json.dumps(summary, ensure_ascii=False, indent=2))
+    safe_summary = html.escape(
+        json.dumps(
+            redact_sensitive_values(summary),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -746,6 +880,38 @@ def _origin_of(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _allow_plain_http(scope: Scope, *, allow_published_loopback: bool) -> bool:
+    host_header = ""
+    for key, value in scope.get("headers", []):
+        if key.lower() == b"host":
+            host_header = value.decode("latin-1")
+            break
+    if not host_header:
+        return False
+    parsed = urlsplit(f"//{host_header}")
+    hostname = parsed.hostname
+    if hostname == "localhost":
+        host_is_loopback = True
+    elif hostname is None:
+        return False
+    else:
+        try:
+            host_is_loopback = ip_address(hostname).is_loopback
+        except ValueError:
+            return False
+    if not host_is_loopback:
+        return False
+
+    client = scope.get("client")
+    if client is not None:
+        try:
+            if ip_address(client[0]).is_loopback:
+                return True
+        except ValueError:
+            pass
+    return allow_published_loopback
+
+
 def create_app(*, dangerously_enable_trading: bool = False) -> ASGIApp:
     settings = load_server_settings(dangerously_enable_trading)
     return create_http_app(settings)
@@ -755,9 +921,13 @@ def create_http_app(settings: Settings) -> ASGIApp:
     mcp, _ = create_mcp(settings)
     middleware = [
         Middleware(
+            TransportSecurityMiddleware,
+            allow_loopback_http=ip_address(settings.mcp_published_host).is_loopback,
+        ),
+        Middleware(
             OriginValidationMiddleware,
             allowed_origins=settings.mcp_allowed_origins,
-        )
+        ),
     ]
     return mcp.http_app(
         path="/mcp",
@@ -783,8 +953,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def load_server_settings(dangerously_enable_trading: bool) -> Settings:
-    return Settings(  # type: ignore[call-arg]
-        tossinvest_enable_trading=dangerously_enable_trading
+    return Settings(
+        tossinvest_client_id=None,
+        tossinvest_client_secret=None,
+        tossinvest_account_seq=None,
+        tossinvest_account_index=None,
+        tossinvest_max_order_krw=None,
+        tossinvest_max_order_usd=None,
+        tossinvest_approval_token_sha256=None,
+        mcp_auth_token=None,
+        tossinvest_enable_trading=dangerously_enable_trading,
     )
 
 
@@ -797,6 +975,9 @@ def main(argv: list[str] | None = None) -> None:
         port=settings.mcp_port,
         log_level=settings.log_level.lower(),
         workers=1,
+        access_log=False,
+        proxy_headers=True,
+        forwarded_allow_ips=settings.mcp_trusted_proxy_ips,
     )
 
 

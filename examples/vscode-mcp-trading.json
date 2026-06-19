@@ -1,0 +1,47 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "tossinvest-client-id",
+      "description": "TossInvest Client ID",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "tossinvest-client-secret",
+      "description": "TossInvest Client Secret",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "tossinvest-max-order-krw",
+      "description": "Maximum KRW order amount",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "tossinvest-max-order-usd",
+      "description": "Maximum USD order amount",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "tossinvest-approval-token-sha256",
+      "description": "Human approval token SHA-256 digest",
+      "password": true
+    }
+  ],
+  "servers": {
+    "tossinvest": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": {
+        "X-Tossinvest-Client-Id": "${input:tossinvest-client-id}",
+        "X-Tossinvest-Client-Secret": "${input:tossinvest-client-secret}",
+        "X-Tossinvest-Max-Order-Krw": "${input:tossinvest-max-order-krw}",
+        "X-Tossinvest-Max-Order-Usd": "${input:tossinvest-max-order-usd}",
+        "X-Tossinvest-Approval-Token-Sha256": "${input:tossinvest-approval-token-sha256}"
+      }
+    }
+  }
+}

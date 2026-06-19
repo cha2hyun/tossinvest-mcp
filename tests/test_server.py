@@ -11,15 +11,18 @@ from fastmcp.exceptions import ToolError
 from pydantic import SecretStr
 from starlette.middleware import Middleware
 
+import tossinvest_mcp.tenants as tenants_module
 from tossinvest_mcp.errors import TossInvestError
 from tossinvest_mcp.models import OrderPreviewRequest
 from tossinvest_mcp.server import (
     OriginValidationMiddleware,
+    TransportSecurityMiddleware,
     build_argument_parser,
     create_mcp,
     load_server_settings,
 )
 from tossinvest_mcp.settings import Settings
+from tossinvest_mcp.tenants import TenantServiceRegistry
 
 from .conftest import APPROVAL_TOKEN
 from .test_service import StubClient
@@ -49,6 +52,19 @@ class ErrorClient(StubClient):
         raise TossInvestError("safe upstream message", code="boom-code")
 
 
+class SensitiveResponseClient(StubClient):
+    async def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "data": {
+                "symbol": "005930",
+                "accountSeq": "7",
+                "accountNo": "1234567890",
+                "client_secret": "must-not-escape",
+            },
+            "meta": {},
+        }
+
+
 def test_dangerous_trading_flag_is_explicit() -> None:
     parser = build_argument_parser()
 
@@ -74,11 +90,14 @@ def test_trading_environment_variable_cannot_enable_server_without_flag(
     settings = load_server_settings(False)
 
     assert settings.tossinvest_enable_trading is False
+    assert settings.has_static_credentials is False
+    assert settings.tossinvest_account_seq is None
+    assert settings.mcp_auth_token is None
 
 
 @pytest.mark.asyncio
 async def test_read_only_server_hides_trading_tools(settings: Settings) -> None:
-    mcp, _ = create_mcp(settings, client=StubClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(settings, client=StubClient())
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
 
@@ -88,10 +107,33 @@ async def test_read_only_server_hides_trading_tools(settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_runtime_starts_public_tool_catalog_without_credentials(
+    runtime_settings: Settings,
+) -> None:
+    mcp, registry = create_mcp(runtime_settings)
+
+    assert isinstance(registry, TenantServiceRegistry)
+    assert {tool.name for tool in await mcp.list_tools()} == READ_TOOL_NAMES
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="credentials-required"):
+            await client.call_tool("get_prices", {"symbols": "005930"})
+
+
+@pytest.mark.asyncio
+async def test_create_mcp_uses_request_credentials_unless_client_is_explicit(
+    settings: Settings,
+) -> None:
+    _, registry = create_mcp(settings)
+
+    assert isinstance(registry, TenantServiceRegistry)
+    await registry.close()
+
+
+@pytest.mark.asyncio
 async def test_trading_server_registers_preview_and_execution_tools(
     trading_settings: Settings,
 ) -> None:
-    mcp, _ = create_mcp(trading_settings, client=StubClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(trading_settings, client=StubClient())
     names = {tool.name for tool in await mcp.list_tools()}
 
     assert {
@@ -145,7 +187,7 @@ async def test_trading_server_registers_preview_and_execution_tools(
 async def test_server_exposes_no_secret_resources_prompts_or_tool_inputs(
     trading_settings: Settings,
 ) -> None:
-    mcp, _ = create_mcp(trading_settings, client=StubClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(trading_settings, client=StubClient())
     tools = await mcp.list_tools()
     serialized = json.dumps(
         [
@@ -167,8 +209,10 @@ async def test_server_exposes_no_secret_resources_prompts_or_tool_inputs(
         "tossinvest_approval_token_sha256",
         "approval_token",
         "authorization",
+        "x-tossinvest",
     ):
         assert forbidden not in serialized
+    assert mcp.instructions is not None
     assert "never retry a write" in mcp.instructions.lower()
 
 
@@ -178,7 +222,7 @@ async def test_human_approval_route_is_separate_from_mcp(
 ) -> None:
     mcp, service = create_mcp(
         trading_settings,
-        client=StubClient(),  # type: ignore[arg-type]
+        client=StubClient(),
     )
     preview = await service.preview_order(
         OrderPreviewRequest(
@@ -242,12 +286,62 @@ async def test_human_approval_route_is_separate_from_mcp(
 
 
 @pytest.mark.asyncio
+async def test_request_scoped_trading_uses_tenant_approval_hash(
+    runtime_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_values: dict[str, Any] = runtime_settings.model_dump()
+    runtime_values["tossinvest_enable_trading"] = True
+    runtime = Settings(**runtime_values)
+    headers = {
+        "x-tossinvest-client-id": "tenant-client",
+        "x-tossinvest-client-secret": "tenant-secret",
+        "x-tossinvest-max-order-krw": "1000000",
+        "x-tossinvest-max-order-usd": "500",
+        "x-tossinvest-approval-token-sha256": hashlib.sha256(APPROVAL_TOKEN.encode()).hexdigest(),
+    }
+    monkeypatch.setattr(tenants_module, "get_http_headers", lambda **_: headers)
+    monkeypatch.setattr(tenants_module, "TossInvestClient", lambda _: StubClient())
+
+    mcp, registry = create_mcp(runtime)
+    assert isinstance(registry, TenantServiceRegistry)
+    service = await registry.current_service()
+    preview = await service.preview_order(
+        OrderPreviewRequest(
+            symbol="005930",
+            side="BUY",
+            order_type="LIMIT",
+            quantity="1",
+            price="70000",
+        )
+    )
+    await registry.register_preview(preview["preview_id"], service)
+    app = mcp.http_app(path="/mcp", stateless_http=True)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        approved = await client.post(
+            f"/approvals/{preview['preview_id']}",
+            headers={"Origin": "http://127.0.0.1:8000"},
+            data={
+                "decision": "approve",
+                "approval_token": APPROVAL_TOKEN,
+            },
+        )
+
+    assert approved.status_code == 200
+    result = await service.place_order(preview["preview_id"])
+    assert result["operation"]["data"]["orderId"] == "order-1"
+    await registry.close()
+
+
+@pytest.mark.asyncio
 async def test_approval_route_rate_limits_repeated_submissions(
     trading_settings: Settings,
 ) -> None:
     mcp, _ = create_mcp(
         trading_settings,
-        client=StubClient(),  # type: ignore[arg-type]
+        client=StubClient(),
     )
     app = mcp.http_app(path="/mcp", stateless_http=True)
     transport = httpx.ASGITransport(app=app)
@@ -269,7 +363,7 @@ async def test_approval_route_rate_limits_repeated_submissions(
 
 @pytest.mark.asyncio
 async def test_date_and_datetime_inputs_use_openapi_formats(settings: Settings) -> None:
-    mcp, _ = create_mcp(settings, client=StubClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(settings, client=StubClient())
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
     def formats(tool_name: str, parameter_name: str) -> set[str]:
@@ -285,7 +379,7 @@ async def test_date_and_datetime_inputs_use_openapi_formats(settings: Settings) 
 
 @pytest.mark.asyncio
 async def test_mcp_initialize_list_and_tool_call(settings: Settings) -> None:
-    mcp, _ = create_mcp(settings, client=StubClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(settings, client=StubClient())
 
     async with Client(mcp) as client:
         assert await client.ping() is True
@@ -302,7 +396,7 @@ async def test_mcp_trading_tools_return_structured_preview_and_execution(
 ) -> None:
     mcp, service = create_mcp(
         trading_settings,
-        client=StubClient(),  # type: ignore[arg-type]
+        client=StubClient(),
     )
 
     async with Client(mcp) as client:
@@ -328,7 +422,7 @@ async def test_mcp_trading_tools_return_structured_preview_and_execution(
 async def test_expected_upstream_error_is_returned_as_safe_tool_error(
     settings: Settings,
 ) -> None:
-    mcp, _ = create_mcp(settings, client=ErrorClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(settings, client=ErrorClient())
 
     async with Client(mcp) as client:
         with pytest.raises(ToolError, match="boom-code"):
@@ -336,8 +430,21 @@ async def test_expected_upstream_error_is_returned_as_safe_tool_error(
 
 
 @pytest.mark.asyncio
+async def test_tool_results_redact_account_and_credential_fields(settings: Settings) -> None:
+    mcp, _ = create_mcp(settings, client=SensitiveResponseClient())
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("get_prices", {"symbols": "005930"})
+
+    serialized = json.dumps(result.structured_content)
+    assert "1234567890" not in serialized
+    assert "must-not-escape" not in serialized
+    assert result.structured_content["data"]["accountSeq"] == "[REDACTED]"
+
+
+@pytest.mark.asyncio
 async def test_http_auth_and_origin_protection(settings: Settings) -> None:
-    mcp, _ = create_mcp(settings, client=StubClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(settings, client=StubClient())
     app = mcp.http_app(
         path="/mcp",
         stateless_http=True,
@@ -364,6 +471,74 @@ async def test_http_auth_and_origin_protection(settings: Settings) -> None:
     assert health.status_code == 200
     assert blocked.status_code == 403
     assert unauthorized.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_public_http_is_rejected_and_https_gets_security_headers(
+    runtime_settings: Settings,
+) -> None:
+    mcp, _ = create_mcp(runtime_settings)
+    app = mcp.http_app(
+        path="/mcp",
+        stateless_http=True,
+        middleware=[
+            Middleware(
+                TransportSecurityMiddleware,
+                allow_loopback_http=False,
+            )
+        ],
+    )
+
+    public_transport = httpx.ASGITransport(app=app, client=("203.0.113.10", 1234))
+    async with httpx.AsyncClient(
+        transport=public_transport,
+        base_url="http://mcp.example",
+    ) as client:
+        response = await client.get("/healthz")
+    assert response.status_code == 426
+    assert response.json() == {"error": "https-required"}
+    assert response.headers["Cache-Control"] == "no-store"
+
+    secure_transport = httpx.ASGITransport(app=app, client=("203.0.113.10", 1234))
+    async with httpx.AsyncClient(
+        transport=secure_transport,
+        base_url="https://mcp.example",
+    ) as client:
+        response = await client.get("/healthz")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "max-age=31536000" in response.headers["Strict-Transport-Security"]
+
+    async with httpx.AsyncClient(
+        transport=public_transport,
+        base_url="http://127.0.0.1",
+    ) as client:
+        spoofed_loopback_host = await client.get("/healthz")
+    assert spoofed_loopback_host.status_code == 426
+
+    internal_transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
+    async with httpx.AsyncClient(
+        transport=internal_transport,
+        base_url="http://127.0.0.1",
+    ) as client:
+        internal_health = await client.get("/healthz")
+    assert internal_health.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_loopback_http_remains_available(runtime_settings: Settings) -> None:
+    mcp, _ = create_mcp(runtime_settings)
+    app = mcp.http_app(
+        path="/mcp",
+        stateless_http=True,
+        middleware=[Middleware(TransportSecurityMiddleware)],
+    )
+    transport = httpx.ASGITransport(app=app, client=("172.17.0.1", 1234))
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        response = await client.get("/healthz")
+
+    assert response.status_code == 200
 
 
 def test_trading_settings_require_limits(settings: Settings) -> None:
@@ -430,9 +605,33 @@ def test_allowed_origins_accept_comma_separated_environment(
         "https://a.example, https://b.example",
     )
 
-    settings = Settings()  # type: ignore[call-arg]
+    settings = Settings()
 
     assert settings.mcp_allowed_origins == [
         "https://a.example",
         "https://b.example",
     ]
+
+
+def test_plain_http_origins_and_wildcard_proxy_trust_are_rejected(
+    runtime_settings: Settings,
+) -> None:
+    values: dict[str, Any] = runtime_settings.model_dump()
+    values["tossinvest_base_url"] = "http://api.example"
+    with pytest.raises(ValueError, match="TOSSINVEST_BASE_URL must use HTTPS"):
+        Settings(**values)
+
+    values = runtime_settings.model_dump()
+    values["mcp_allowed_origins"] = ["http://agent.example"]
+    with pytest.raises(ValueError, match="MCP_ALLOWED_ORIGINS must use HTTPS"):
+        Settings(**values)
+
+    values = runtime_settings.model_dump()
+    values["mcp_trusted_proxy_ips"] = "*"
+    with pytest.raises(ValueError, match="explicit proxy IP"):
+        Settings(**values)
+
+    values = runtime_settings.model_dump()
+    values["mcp_published_host"] = "public.example"
+    with pytest.raises(ValueError, match="must be an IP address"):
+        Settings(**values)

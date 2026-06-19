@@ -1,10 +1,15 @@
 # DANGEROUS: use only with a server intentionally started with
-# --dangerously-enable-trading. Never place the human approval token or its hash in Hermes.
+# --dangerously-enable-trading. These values are sent as private HTTP headers and require HTTPS
+# when the MCP server is remote.
 mcp_servers:
   tossinvest:
     url: "http://127.0.0.1:8000/mcp"
     headers:
-      Authorization: "Bearer ${TOSSINVEST_MCP_AUTH_TOKEN}"
+      X-Tossinvest-Client-Id: "${TOSSINVEST_CLIENT_ID}"
+      X-Tossinvest-Client-Secret: "${TOSSINVEST_CLIENT_SECRET}"
+      X-Tossinvest-Max-Order-Krw: "${TOSSINVEST_MAX_ORDER_KRW}"
+      X-Tossinvest-Max-Order-Usd: "${TOSSINVEST_MAX_ORDER_USD}"
+      X-Tossinvest-Approval-Token-Sha256: "${TOSSINVEST_APPROVAL_TOKEN_SHA256}"
     enabled: true
     timeout: 120
     connect_timeout: 30

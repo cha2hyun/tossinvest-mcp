@@ -5,8 +5,6 @@ import re
 import sys
 from pathlib import Path
 
-from tossinvest_mcp.settings import Settings
-
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_PARTS = {".git", ".venv", ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist"}
 LINK_PATTERN = re.compile(r"!?\[[^\]]*]\(([^)]+)\)")
@@ -15,6 +13,18 @@ RAW_APPROVAL_ASSIGNMENT = re.compile(
     r"^\s*TOSSINVEST_APPROVAL_TOKEN\s*=",
     re.MULTILINE,
 )
+SERVER_ENV_KEYS = {
+    "MCP_ALLOWED_ORIGINS",
+    "MCP_PUBLISHED_HOST",
+    "MCP_PUBLISHED_PORT",
+    "MCP_TENANT_CACHE_SIZE",
+    "MCP_TENANT_CACHE_TTL",
+    "MCP_TRUSTED_PROXY_IPS",
+    "TOSSINVEST_APPROVAL_BASE_URL",
+    "TOSSINVEST_BASE_URL",
+    "TOSSINVEST_REQUEST_TIMEOUT",
+    "LOG_LEVEL",
+}
 
 
 def markdown_files() -> list[Path]:
@@ -71,11 +81,7 @@ def dotenv_keys() -> set[str]:
 
 
 def expected_dotenv_keys() -> set[str]:
-    keys = {
-        field.upper() for field in Settings.model_fields if field != "tossinvest_enable_trading"
-    }
-    keys.add("MCP_PUBLISHED_PORT")
-    return keys
+    return SERVER_ENV_KEYS
 
 
 def main() -> int:

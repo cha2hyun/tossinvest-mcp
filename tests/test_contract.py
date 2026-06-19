@@ -24,7 +24,7 @@ async def test_every_official_operation_maps_to_an_implementation(
     tool_map = json.loads((ROOT / "openapi" / "tool-map.json").read_text(encoding="utf-8"))
     assert set(manifest["operation_ids"]) == set(tool_map)
 
-    mcp, _ = create_mcp(trading_settings, client=StubClient())  # type: ignore[arg-type]
+    mcp, _ = create_mcp(trading_settings, client=StubClient())
     registered = {tool.name for tool in await mcp.list_tools()}
     mapped_tools = {
         tool

@@ -6,16 +6,35 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
 from tossinvest_mcp.errors import OrderStateUnknownError, TossInvestError
+from tossinvest_mcp.logging_utils import redact_sensitive_values
 from tossinvest_mcp.rate_limit import RateLimiter
 from tossinvest_mcp.settings import Settings
 
 Sleep = Callable[[float], Awaitable[None]]
 Clock = Callable[[], float]
+
+
+class TossInvestClientLike(Protocol):
+    async def aclose(self) -> None: ...
+
+    async def is_ready(self) -> bool: ...
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        group: str,
+        params: Mapping[str, Any] | None = None,
+        json: Mapping[str, Any] | None = None,
+        account_required: bool = False,
+        write_operation: bool = False,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -36,6 +55,8 @@ class TossInvestClient:
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
+        if not settings.has_static_credentials:
+            raise ValueError("TossInvestClient requires request or static Toss credentials")
         self.settings = settings
         self._clock = clock
         self._sleep = sleep
@@ -48,6 +69,8 @@ class TossInvestClient:
         self._owns_http_client = http_client is None
         self._token: _Token | None = None
         self._token_lock = asyncio.Lock()
+        self._resolved_account_seq: str | None = settings.tossinvest_account_seq
+        self._account_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
         if self._owns_http_client:
@@ -71,6 +94,8 @@ class TossInvestClient:
                 return self._token.value
 
             await self._rate_limiter.acquire("AUTH")
+            assert self.settings.tossinvest_client_id is not None
+            assert self.settings.tossinvest_client_secret is not None
             try:
                 response = await self._http.post(
                     "/oauth2/token",
@@ -115,11 +140,7 @@ class TossInvestClient:
         account_required: bool = False,
         write_operation: bool = False,
     ) -> dict[str, Any]:
-        if account_required and not self.settings.tossinvest_account_seq:
-            raise TossInvestError(
-                "TOSSINVEST_ACCOUNT_SEQ is required for this operation",
-                code="account-not-configured",
-            )
+        account_seq = await self._get_account_seq() if account_required else None
 
         refreshed_after_401 = False
         max_attempts = 3 if method.upper() == "GET" else 1
@@ -131,7 +152,8 @@ class TossInvestClient:
             token = await self._get_access_token()
             headers = {"Authorization": f"Bearer {token}"}
             if account_required:
-                headers["X-Tossinvest-Account"] = str(self.settings.tossinvest_account_seq)
+                assert account_seq is not None
+                headers["X-Tossinvest-Account"] = account_seq
 
             try:
                 response = await self._http.request(
@@ -175,6 +197,69 @@ class TossInvestClient:
 
         raise TossInvestError("The Toss Securities API request exhausted its retry budget")
 
+    async def _get_account_seq(self) -> str:
+        if self._resolved_account_seq is not None:
+            return self._resolved_account_seq
+
+        async with self._account_lock:
+            if self._resolved_account_seq is not None:
+                return self._resolved_account_seq
+
+            response = await self.request(
+                "GET",
+                "/api/v1/accounts",
+                group="ACCOUNT",
+            )
+            raw_accounts = response.get("data")
+            accounts = (
+                [
+                    account
+                    for account in raw_accounts
+                    if isinstance(account, Mapping) and account.get("accountSeq") is not None
+                ]
+                if isinstance(raw_accounts, list)
+                else []
+            )
+            if not accounts:
+                raise TossInvestError(
+                    "No usable Toss Securities account was returned",
+                    code="account-not-found",
+                )
+
+            selected_index = self.settings.tossinvest_account_index
+            if selected_index is None:
+                if len(accounts) != 1:
+                    raise TossInvestError(
+                        "Multiple accounts are available; select an account index in the MCP "
+                        "connection headers",
+                        code="account-selection-required",
+                        data={
+                            "account_count": len(accounts),
+                            "accounts": [
+                                {
+                                    "account_index": index,
+                                    "account_type": account.get("accountType"),
+                                }
+                                for index, account in enumerate(accounts, start=1)
+                            ],
+                            "header": "X-Tossinvest-Account-Index",
+                        },
+                    )
+                selected_index = 1
+
+            if selected_index > len(accounts):
+                raise TossInvestError(
+                    "The selected account index is outside the available account list",
+                    code="invalid-account-selection",
+                    data={
+                        "selected_index": selected_index,
+                        "account_count": len(accounts),
+                    },
+                )
+
+            self._resolved_account_seq = str(accounts[selected_index - 1]["accountSeq"])
+            return self._resolved_account_seq
+
     @staticmethod
     def _clean_params(params: Mapping[str, Any] | None) -> dict[str, Any] | None:
         if params is None:
@@ -198,6 +283,7 @@ class TossInvestClient:
         self, response: httpx.Response, payload: Mapping[str, Any]
     ) -> TossInvestError:
         error = self._extract_error(payload)
+        secrets = self._sensitive_values()
         request_id = (
             str(error.get("requestId"))
             if error.get("requestId")
@@ -207,11 +293,26 @@ class TossInvestClient:
             f"Toss Securities API returned HTTP {response.status_code}"
         )
         return TossInvestError(
-            str(message),
+            str(redact_sensitive_values(str(message), secrets)),
             status_code=response.status_code,
             code=str(error.get("code") or "upstream-error"),
             request_id=request_id,
-            data=error.get("data"),
+            data=redact_sensitive_values(error.get("data"), secrets),
+        )
+
+    def _sensitive_values(self) -> tuple[str, ...]:
+        return (
+            *self._credential_values(),
+            self._resolved_account_seq or "",
+        )
+
+    def _credential_values(self) -> tuple[str, ...]:
+        assert self.settings.tossinvest_client_id is not None
+        assert self.settings.tossinvest_client_secret is not None
+        return (
+            self.settings.tossinvest_client_id,
+            self.settings.tossinvest_client_secret.get_secret_value(),
+            self._token.value if self._token is not None else "",
         )
 
     @staticmethod
@@ -226,10 +327,17 @@ class TossInvestClient:
             min(4.0, (2 ** (attempt - 1)) + random.uniform(0.0, 0.25))  # noqa: S311
         )
 
-    @staticmethod
-    def _normalize_response(response: httpx.Response, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _normalize_response(
+        self,
+        response: httpx.Response,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
         return {
-            "data": payload.get("result", payload),
+            "data": redact_sensitive_values(
+                payload.get("result", payload),
+                self._credential_values(),
+                redact_accounts=False,
+            ),
             "meta": {
                 "request_id": response.headers.get("X-Request-Id")
                 or response.headers.get("cf-ray"),

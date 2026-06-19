@@ -5,7 +5,7 @@ import uuid
 from decimal import Decimal
 from typing import Any, Literal, cast
 
-from tossinvest_mcp.client import TossInvestClient
+from tossinvest_mcp.client import TossInvestClientLike
 from tossinvest_mcp.errors import TossInvestError
 from tossinvest_mcp.models import OrderModificationRequest, OrderPreviewRequest
 from tossinvest_mcp.previews import Preview, PreviewStore
@@ -22,7 +22,7 @@ class TossInvestService:
     def __init__(
         self,
         settings: Settings,
-        client: TossInvestClient,
+        client: TossInvestClientLike,
         previews: PreviewStore | None = None,
     ) -> None:
         self.settings = settings
@@ -131,15 +131,25 @@ class TossInvestService:
                 "The upstream account response was malformed",
                 code="invalid-upstream-response",
             )
-        selected_seq = self.settings.tossinvest_account_seq
+        valid_accounts = [
+            account
+            for account in accounts
+            if isinstance(account, dict) and account.get("accountSeq") is not None
+        ]
+        selected_index = self.settings.tossinvest_account_index
+        if selected_index is None and len(valid_accounts) == 1:
+            selected_index = 1
         response["data"] = [
             {
+                "account_index": index,
                 "account_type": account.get("accountType"),
-                "selected": selected_seq is not None
-                and str(account.get("accountSeq")) == selected_seq,
+                "selected": selected_index == index
+                or (
+                    self.settings.tossinvest_account_seq is not None
+                    and str(account.get("accountSeq")) == self.settings.tossinvest_account_seq
+                ),
             }
-            for account in accounts
-            if isinstance(account, dict)
+            for index, account in enumerate(valid_accounts, start=1)
         ]
         return response
 

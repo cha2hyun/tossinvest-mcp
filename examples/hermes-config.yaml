@@ -1,13 +1,11 @@
-# Add this block under the top-level `mcp_servers` key in ~/.hermes/config.yaml.
-# Store only the token value (without "Bearer ") as TOSSINVEST_MCP_AUTH_TOKEN
-# in ~/.hermes/.env.
-# Never put the human approval token or TOSSINVEST_APPROVAL_TOKEN_SHA256 in Hermes.
-# This example intentionally allowlists read-only tools only.
+# Put TOSSINVEST_CLIENT_ID and TOSSINVEST_CLIENT_SECRET in ~/.hermes/.env,
+# not in the MCP server container environment. A single account is selected automatically.
 mcp_servers:
   tossinvest:
     url: "http://127.0.0.1:8000/mcp"
     headers:
-      Authorization: "Bearer ${TOSSINVEST_MCP_AUTH_TOKEN}"
+      X-Tossinvest-Client-Id: "${TOSSINVEST_CLIENT_ID}"
+      X-Tossinvest-Client-Secret: "${TOSSINVEST_CLIENT_SECRET}"
     enabled: true
     timeout: 120
     connect_timeout: 30

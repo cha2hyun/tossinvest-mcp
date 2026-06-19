@@ -13,6 +13,14 @@ APPROVAL_TOKEN_SHA256 = hashlib.sha256(APPROVAL_TOKEN.encode()).hexdigest()
 
 
 @pytest.fixture
+def runtime_settings() -> Settings:
+    return Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        tossinvest_base_url="https://openapi.test",
+    )
+
+
+@pytest.fixture
 def settings() -> Settings:
     return Settings(
         tossinvest_client_id="client-id",

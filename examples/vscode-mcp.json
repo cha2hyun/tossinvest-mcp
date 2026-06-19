@@ -1,0 +1,26 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "tossinvest-client-id",
+      "description": "TossInvest Client ID",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "tossinvest-client-secret",
+      "description": "TossInvest Client Secret",
+      "password": true
+    }
+  ],
+  "servers": {
+    "tossinvest": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": {
+        "X-Tossinvest-Client-Id": "${input:tossinvest-client-id}",
+        "X-Tossinvest-Client-Secret": "${input:tossinvest-client-secret}"
+      }
+    }
+  }
+}

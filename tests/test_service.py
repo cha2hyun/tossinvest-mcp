@@ -151,7 +151,7 @@ async def test_order_requires_separate_human_approval(
     trading_settings: Settings,
 ) -> None:
     client = StubClient()
-    service = TossInvestService(trading_settings, client)  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, client)
     preview = await service.preview_order(
         OrderPreviewRequest(
             symbol="005930",
@@ -187,7 +187,7 @@ async def test_configured_order_limit_is_enforced(
     trading_settings: Settings,
 ) -> None:
     trading_settings.tossinvest_max_order_krw = Decimal("100000")
-    service = TossInvestService(trading_settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, StubClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order(
@@ -208,7 +208,7 @@ async def test_approved_order_is_revalidated_before_dispatch(
     trading_settings: Settings,
 ) -> None:
     client = DroppingBuyingPowerClient()
-    service = TossInvestService(trading_settings, client)  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, client)
     preview = await service.preview_order(
         OrderPreviewRequest(
             symbol="005930",
@@ -234,7 +234,7 @@ async def test_approved_order_is_revalidated_before_dispatch(
 async def test_us_quantity_market_order_is_rejected_as_unbounded(
     trading_settings: Settings,
 ) -> None:
-    service = TossInvestService(trading_settings, UsStockClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, UsStockClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order(
@@ -254,7 +254,7 @@ async def test_successful_write_is_not_repeated_when_followup_lookup_fails(
     trading_settings: Settings,
 ) -> None:
     client = FailingLookupClient()
-    service = TossInvestService(trading_settings, client)  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, client)
     preview = await service.preview_order(
         OrderPreviewRequest(
             symbol="005930",
@@ -276,11 +276,17 @@ async def test_successful_write_is_not_repeated_when_followup_lookup_fails(
 
 @pytest.mark.asyncio
 async def test_account_identifiers_are_redacted(settings: Settings) -> None:
-    service = TossInvestService(settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(settings, StubClient())
 
     response = await service.list_accounts()
 
-    assert response["data"] == [{"account_type": "BROKERAGE", "selected": True}]
+    assert response["data"] == [
+        {
+            "account_index": 1,
+            "account_type": "BROKERAGE",
+            "selected": True,
+        }
+    ]
     assert "accountNo" not in str(response)
     assert "accountSeq" not in str(response)
     assert "12345678901" not in str(response)
@@ -290,7 +296,7 @@ async def test_account_identifiers_are_redacted(settings: Settings) -> None:
 async def test_korean_amount_order_is_rejected(
     trading_settings: Settings,
 ) -> None:
-    service = TossInvestService(trading_settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, StubClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order(
@@ -310,7 +316,7 @@ async def test_korean_market_order_uses_upper_limit_for_safety(
     trading_settings: Settings,
 ) -> None:
     trading_settings.tossinvest_max_order_krw = Decimal("80000")
-    service = TossInvestService(trading_settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, StubClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order(
@@ -330,7 +336,7 @@ async def test_korean_market_order_uses_upper_limit_for_safety(
 async def test_preview_rejects_insufficient_buying_power(
     trading_settings: Settings,
 ) -> None:
-    service = TossInvestService(trading_settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, StubClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order(
@@ -350,7 +356,7 @@ async def test_preview_rejects_insufficient_buying_power(
 async def test_preview_rejects_insufficient_sellable_quantity(
     trading_settings: Settings,
 ) -> None:
-    service = TossInvestService(trading_settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, StubClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order(
@@ -371,7 +377,7 @@ async def test_modify_and_cancel_require_separate_human_approval(
     trading_settings: Settings,
 ) -> None:
     client = StubClient()
-    service = TossInvestService(trading_settings, client)  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, client)
 
     modify_preview = await service.preview_order_modification(
         OrderModificationRequest(
@@ -411,7 +417,7 @@ async def test_modify_and_cancel_require_separate_human_approval(
 async def test_korean_modification_requires_quantity(
     trading_settings: Settings,
 ) -> None:
-    service = TossInvestService(trading_settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, StubClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order_modification(
@@ -430,7 +436,7 @@ async def test_korean_market_modification_uses_upper_limit(
     trading_settings: Settings,
 ) -> None:
     trading_settings.tossinvest_max_order_krw = Decimal("800000")
-    service = TossInvestService(trading_settings, StubClient())  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, StubClient())
 
     with pytest.raises(TossInvestError) as exc_info:
         await service.preview_order_modification(
@@ -450,7 +456,7 @@ async def test_approved_modification_revalidates_additional_buying_power(
     trading_settings: Settings,
 ) -> None:
     client = DroppingBuyingPowerClient()
-    service = TossInvestService(trading_settings, client)  # type: ignore[arg-type]
+    service = TossInvestService(trading_settings, client)
     preview = await service.preview_order_modification(
         OrderModificationRequest(
             order_id="order-original",

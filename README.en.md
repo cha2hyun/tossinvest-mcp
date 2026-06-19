@@ -2,108 +2,98 @@
 
 [한국어](README.md)
 
-A security-focused Model Context Protocol server for the official
+An independent MCP server for the official
 [Toss Securities Open API](https://developers.tossinvest.com/docs).
 
-It exposes Korean and US stock data, market calendars, exchange rates, holdings, buying power,
-sellable quantities, commissions, and order history. Live order tools are absent by default.
+The server keeps Toss API credentials and account values out of its `.env` and container
+environment. MCP clients send them as private request headers, and the server builds an isolated
+authentication context per credential fingerprint. Those headers are transport metadata, not MCP
+tool arguments or schemas.
 
-> This independent open-source project is not an official Toss Securities product and does not
-> provide investment advice. Users remain responsible for every submitted order.
+## Security properties
 
-## Safety model
-
-- The default command and default Compose file register 16 read-only tools and no trading tools.
-- Environment variables cannot enable trading by themselves.
-- Trading requires the explicit `--dangerously-enable-trading` process argument.
-- Every create, modify, or cancel operation requires an expiring preview and separate human
-  approval outside MCP.
-- The human approval token is never stored in server or Hermes configuration; the server receives
-  only its SHA-256 digest.
-- Approved previews are revalidated immediately before dispatch.
-- KR market orders use the official upper price limit for safety checks.
-- Unbounded US quantity-based market orders and US market modifications are rejected.
+- Read-only by default; trading tools require `--dangerously-enable-trading`.
+- Public plain HTTP requests are rejected. HTTP is accepted only for loopback-published local
+  servers and internal health checks.
+- Responses use `Cache-Control: no-store`; HTTPS responses also use HSTS.
+- Uvicorn access logging is disabled by default.
+- Credential and account fields are redacted from upstream responses and errors.
+- OAuth tokens, HTTP clients, rate limits, and previews are isolated per request credential set.
+- Writes require an expiring preview, separate human approval, and immediate revalidation.
 - Writes are single-use and are never retried automatically.
-- MCP tool annotations and structured output schemas expose the safety profile to agents.
 
-## Read-only quick start
+## Quick start
 
 ```bash
 git clone https://github.com/cha2hyun/tossinvest-mcp.git
 cd tossinvest-mcp
 cp .env.example .env
-openssl rand -hex 32
-```
-
-Put the generated value in `MCP_AUTH_TOKEN`. It must differ from
-`TOSSINVEST_CLIENT_SECRET`.
-
-Minimal `.env`:
-
-```dotenv
-TOSSINVEST_CLIENT_ID=your_client_id
-TOSSINVEST_CLIENT_SECRET=your_client_secret
-TOSSINVEST_ACCOUNT_SEQ=1
-MCP_AUTH_TOKEN=a_separate_random_value
-```
-
-Start the read-only server:
-
-```bash
 docker compose up -d --build
 curl http://127.0.0.1:8000/healthz
 ```
 
-The MCP endpoint is `http://127.0.0.1:8000/mcp`.
+The server `.env` contains non-secret operational settings only. Store Toss credentials in the MCP
+client's secret store. For Hermes, copy [`examples/hermes.env.example`](examples/hermes.env.example)
+to `~/.hermes/.env` and use [`examples/hermes-config.yaml`](examples/hermes-config.yaml).
 
-## Hermes
-
-Store only the MCP token in `~/.hermes/.env`:
-
-```dotenv
-TOSSINVEST_MCP_AUTH_TOKEN=the_same_value_as_MCP_AUTH_TOKEN
+```yaml
+mcp_servers:
+  tossinvest:
+    url: "http://127.0.0.1:8000/mcp"
+    headers:
+      X-Tossinvest-Client-Id: "${TOSSINVEST_CLIENT_ID}"
+      X-Tossinvest-Client-Secret: "${TOSSINVEST_CLIENT_SECRET}"
 ```
 
-Use [`examples/hermes-config.yaml`](examples/hermes-config.yaml) as the read-only allowlist.
+Never copy credential values into prompts, chats, skills, or tool arguments.
 
-Install the read and trading workflow skills:
+After OAuth, the server discovers accounts itself. A single account is selected automatically and
+its sequence remains internal. If multiple accounts exist, `list_accounts` returns only a
+non-sensitive, 1-based `account_index` and account type. Add the chosen index as the
+`X-Tossinvest-Account-Index` connection header; never pass an account sequence as a tool argument.
 
-```bash
-mkdir -p ~/.hermes/skills
-cp -R skills/tossinvest ~/.hermes/skills/
-cp -R skills/tossinvest-trading ~/.hermes/skills/
+For VS Code, use [`examples/vscode-mcp.json`](examples/vscode-mcp.json). The trading-mode version is
+[`examples/vscode-mcp-trading.json`](examples/vscode-mcp-trading.json). Both use VS Code
+`${input:...}` secrets and require only the client ID and secret for account discovery.
+
+```json
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "tossinvest-client-id",
+      "description": "TossInvest Client ID",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "tossinvest-client-secret",
+      "description": "TossInvest Client Secret",
+      "password": true
+    }
+  ],
+  "servers": {
+    "tossinvest": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": {
+        "X-Tossinvest-Client-Id": "${input:tossinvest-client-id}",
+        "X-Tossinvest-Client-Secret": "${input:tossinvest-client-secret}"
+      }
+    }
+  }
+}
 ```
 
-The trading skill declares trading-tool dependencies and stays hidden when those tools are absent.
+Do not write actual credentials in JSON. VS Code stores prompted inputs securely and sends them as
+connection headers, outside model-generated tool arguments. Remote URLs must use HTTPS.
 
-## Explicitly enabling trading
+## Trading
 
-Generate a separate 32-byte approval token and store the original in a password manager, not in
-`.env` and never in Hermes:
-
-```bash
-openssl rand -hex 32
-```
-
-Calculate its SHA-256 digest without adding the token to shell history:
-
-```bash
-read -rsp "Approval token: " APPROVAL_TOKEN
-echo
-printf '%s' "$APPROVAL_TOKEN" | openssl dgst -sha256 -r | awk '{print $1}'
-unset APPROVAL_TOKEN
-```
-
-Add only the digest and conservative limits to `.env`:
-
-```dotenv
-TOSSINVEST_MAX_ORDER_KRW=1000000
-TOSSINVEST_MAX_ORDER_USD=500
-TOSSINVEST_APPROVAL_TOKEN_SHA256=the_64_character_sha256_digest
-TOSSINVEST_APPROVAL_BASE_URL=http://127.0.0.1:8000
-```
-
-Start with the explicit trading override:
+Generate a separate human approval token and store its original outside both the MCP server and
+client. Put only its SHA-256 digest and conservative KRW/USD limits in the client secret store.
+Then use
+[`examples/hermes-trading-config.yaml`](examples/hermes-trading-config.yaml) and start:
 
 ```bash
 docker compose \
@@ -112,40 +102,30 @@ docker compose \
   up -d --build --force-recreate
 ```
 
-Trading also requires explicitly adding the six preview and execution tools to the Hermes
-allowlist. Never add the approval token or its digest to Hermes.
+Every create, modify, or cancel operation follows preview → browser approval → one execution. If a
+write returns `order-state-unknown`, do not retry it; inspect order history first.
 
-## Order workflow
+## Public deployment
 
-1. The agent establishes exact order intent and checks market/account state.
-2. A preview tool returns the exact order summary, expiry, and `approval_url`.
-3. A human opens the URL and approves with the separate credential.
-4. The agent calls the matching execution tool once.
-5. The server rechecks price, exchange rate, balance or quantity, order state, and configured limits.
-6. The server dispatches once or returns a safe error.
+Terminate TLS at a trusted reverse proxy and use `https://` for both the MCP endpoint and approval
+origin. Preserve the original scheme for Uvicorn and list only the proxy addresses in
+`MCP_TRUSTED_PROXY_IPS`. Disable proxy buffering for MCP streaming, and redact
+`X-Tossinvest-*`, authorization headers, form bodies, and body dumps from proxy/APM logs. Restrict
+health and approval routes and add firewall, VPN, or gateway authentication.
 
-If a write returns `order-state-unknown`, never retry it. Inspect open orders and exact order
-details first.
-
-## Development
+## Verification
 
 ```bash
 uv sync --all-extras
+uv run pytest
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src
-uv run pytest
+uv run mypy src tests
 uv run pip-audit --strict
 uv run python scripts/check_docs.py
 uv run python scripts/validate_skills.py
 uv run python scripts/update_openapi.py --check
-docker build .
+uv build
 ```
 
-See the [Korean README](README.md) for the complete tool catalog, deployment guidance, response
-format, and troubleshooting reference. Report vulnerabilities according to
-[SECURITY.md](SECURITY.md).
-
-## License
-
-[MIT](LICENSE) — Copyright (c) 2026 cha2hyun
+See [SECURITY.md](SECURITY.md) for the threat model and private reporting process.

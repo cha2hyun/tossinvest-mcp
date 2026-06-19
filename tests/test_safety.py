@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tossinvest_mcp.errors import TossInvestError
-from tossinvest_mcp.logging_utils import sanitize_for_log
+from tossinvest_mcp.logging_utils import redact_sensitive_values, sanitize_for_log
 from tossinvest_mcp.previews import PreviewStore
 
 
@@ -25,6 +25,35 @@ def test_sensitive_values_are_masked() -> None:
     assert "a" * 64 not in str(sanitized)
     assert "1234567890" not in str(sanitized)
     assert sanitized["safe"]["symbol"] == "005930"
+
+
+def test_sensitive_values_are_removed_from_upstream_payloads() -> None:
+    secret = "credential-value"  # noqa: S105 - test-only value
+    value = {
+        "message": f"invalid credential {secret}",
+        "accountSeq": "123456",
+        "nested": {"client_id": secret, "safe": "005930"},
+    }
+
+    redacted = redact_sensitive_values(value, (secret,))
+
+    assert secret not in str(redacted)
+    assert "123456" not in str(redacted)
+    assert redacted["nested"]["safe"] == "005930"
+
+
+def test_internal_redaction_can_preserve_account_fields_for_business_logic() -> None:
+    value = {
+        "accountSeq": "7",
+        "accountNo": "1234567890",
+        "client_secret": "must-not-survive",
+    }
+
+    redacted = redact_sensitive_values(value, redact_accounts=False)
+
+    assert redacted["accountSeq"] == "7"
+    assert redacted["accountNo"] == "1234567890"
+    assert redacted["client_secret"] == "[REDACTED]"  # noqa: S105 - redaction marker
 
 
 @pytest.mark.asyncio
