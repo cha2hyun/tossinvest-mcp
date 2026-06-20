@@ -1,12 +1,24 @@
-# TossInvest MCP
+# 토스증권 MCP (TossInvest MCP)
 
 [English](README.en.md)
 
-[토스증권 공식 Open API](https://developers.tossinvest.com/docs)를 MCP 클라이언트에서
-사용하기 위한 독립 오픈소스 서버입니다. 기본 모드는 조회 전용이며, 거래 모드는 명시적인
-프로세스 플래그와 별도 사람 승인을 모두 요구합니다.
+토스증권 MCP는 [토스증권 공식 Open API](https://developers.tossinvest.com/docs)를
+MCP(Model Context Protocol) 호환 AI 에이전트와 연결하는 오픈소스 서버입니다. VS Code,
+Hermes 같은 MCP 클라이언트에서 주식 시세, 보유 종목, 주문 가능 금액과 주문 내역을 조회할
+수 있습니다.
 
 > 이 프로젝트는 토스증권의 공식 제품이 아니며 투자 조언을 제공하지 않습니다.
+
+## 토스증권 MCP란?
+
+TossInvest MCP는 토스증권 Open API의 기능을 AI 에이전트가 호출할 수 있는 MCP 도구로
+제공합니다. Docker 컨테이너는 API 키 없이 계속 실행하고, 각 사용자가 자신의
+`client_id`와 `client_secret`을 MCP 연결의 비공개 요청 헤더로 전달하는 구조입니다.
+
+- 기본 실행은 조회 전용이며 주문 도구가 등록되지 않습니다.
+- 국내외 종목 정보, 시세, 호가, 체결, 계좌와 보유 주식을 조회할 수 있습니다.
+- API 키와 계좌 정보는 MCP 도구 인자나 schema에 노출하지 않습니다.
+- 거래 기능은 `--dangerously-enable-trading`과 별도 사람 승인을 모두 요구합니다.
 
 ## 보안 모델
 
