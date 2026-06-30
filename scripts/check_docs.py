@@ -84,6 +84,10 @@ def expected_dotenv_keys() -> set[str]:
     return SERVER_ENV_KEYS
 
 
+def compose_text() -> str:
+    return (ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+
 def main() -> int:
     errors: list[str] = []
     files = markdown_files()
@@ -98,6 +102,18 @@ def main() -> int:
         errors.append(
             ".env.example keys differ from Settings/Compose: "
             f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+        )
+
+    compose = compose_text()
+    missing_from_compose = sorted(
+        key
+        for key in actual
+        if f"${{{key}" not in compose and f"{key}:" not in compose
+    )
+    if missing_from_compose:
+        errors.append(
+            "compose.yaml does not reference environment keys: "
+            f"{missing_from_compose}"
         )
 
     canonical_readme = (ROOT / "README.md").read_text(encoding="utf-8")

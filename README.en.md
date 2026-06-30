@@ -47,6 +47,11 @@ mcp_servers:
 
 Never copy credential values into prompts, chats, skills, or tool arguments.
 
+If `/mcp` returns `403 {"error":"origin-not-allowed"}`, the client sent an `Origin` header that is
+not allowlisted. Add the exact browser or webview origin to `MCP_ALLOWED_ORIGINS`, separated by
+commas for multiple origins, then recreate the container. For example:
+`MCP_ALLOWED_ORIGINS=http://127.0.0.1:6274,http://localhost:6274`.
+
 After OAuth, the server discovers accounts itself. A single account is selected automatically and
 its sequence remains internal. If multiple accounts exist, `list_accounts` returns only a
 non-sensitive, 1-based `account_index` and account type. Add the chosen index as the

@@ -93,6 +93,11 @@ curl http://127.0.0.1:8000/healthz
 직접 실행할 때만 `MCP_HOST`와 `MCP_PORT`를 사용할 수 있습니다. 이 두 값은 Compose 내부에서
 각각 `0.0.0.0`, `8000`으로 고정됩니다.
 
+`/mcp` 요청이 `403 {"error":"origin-not-allowed"}`로 실패하면 브라우저나 웹뷰 기반
+클라이언트가 보낸 `Origin`이 허용되지 않은 것입니다. 해당 클라이언트의 정확한 origin을
+쉼표로 구분해 `MCP_ALLOWED_ORIGINS`에 넣고 컨테이너를 다시 생성하세요. 예:
+`MCP_ALLOWED_ORIGINS=http://127.0.0.1:6274,http://localhost:6274`.
+
 ## MCP 클라이언트 연결
 
 토스 자격 증명은 MCP 서버가 아니라 클라이언트의 비밀 저장소에 둡니다. Hermes 예시는
