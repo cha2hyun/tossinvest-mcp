@@ -106,15 +106,10 @@ def main() -> int:
 
     compose = compose_text()
     missing_from_compose = sorted(
-        key
-        for key in actual
-        if f"${{{key}" not in compose and f"{key}:" not in compose
+        key for key in actual if f"${{{key}" not in compose and f"{key}:" not in compose
     )
     if missing_from_compose:
-        errors.append(
-            "compose.yaml does not reference environment keys: "
-            f"{missing_from_compose}"
-        )
+        errors.append(f"compose.yaml does not reference environment keys: {missing_from_compose}")
 
     canonical_readme = (ROOT / "README.md").read_text(encoding="utf-8")
     undocumented = sorted(key for key in actual if f"`{key}`" not in canonical_readme)

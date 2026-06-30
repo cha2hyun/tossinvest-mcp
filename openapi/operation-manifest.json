@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
-  "schema_sha256": "cb4a2428e064b92b64dc15f5bf8c8dec4098a363b4fb32b418fe6073bfc0092c",
+  "version": "1.1.5",
+  "schema_sha256": "d24b230d5d9e40fcbbc92205f1400caa8fa576a4e686e6d6c6a20aaeea4ca9f5",
   "operations": [
     "GET /api/v1/accounts",
     "GET /api/v1/buying-power",
