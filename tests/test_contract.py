@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
+import tossinvest_mcp.service as service_module
+from tossinvest_mcp.rate_limit import RATE_LIMITS
 from tossinvest_mcp.server import create_mcp
 from tossinvest_mcp.settings import Settings
 
 from .test_service import StubClient
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_rate_limiter_covers_every_service_api_group() -> None:
+    service_source = Path(service_module.__file__).read_text(encoding="utf-8")
+    used_groups = set(re.findall(r'group="([A-Z_]+)"', service_source))
+
+    assert used_groups <= set(RATE_LIMITS)
 
 
 @pytest.mark.asyncio
@@ -23,6 +33,15 @@ async def test_every_official_operation_maps_to_an_implementation(
     )
     tool_map = json.loads((ROOT / "openapi" / "tool-map.json").read_text(encoding="utf-8"))
     assert set(manifest["operation_ids"]) == set(tool_map)
+
+    for mapping in tool_map.values():
+        assert mapping["kind"] in {"internal", "tool", "unsupported"}
+        if mapping["kind"] == "tool":
+            assert mapping["tools"]
+        elif mapping["kind"] == "internal":
+            assert mapping["implementation"]
+        else:
+            assert mapping["reason"]
 
     mcp, _ = create_mcp(trading_settings, client=StubClient())
     registered = {tool.name for tool in await mcp.list_tools()}

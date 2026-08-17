@@ -207,14 +207,18 @@ index는 실제 계좌값이 아니며 모델 도구 인자에도 들어가지 �
 
 ## 제공 도구
 
-기본 조회 모드는 다음 16개 도구를 제공합니다.
+기본 조회 모드는 다음 28개 도구를 제공합니다.
 
 | 구분 | 도구 |
 | --- | --- |
-| 종목·시세 | `get_stock_info`, `get_stock_warnings`, `get_prices`, `get_orderbook`, `get_recent_trades`, `get_price_limits`, `get_candles` |
-| 시장 정보 | `get_exchange_rate`, `get_market_calendar` |
+| 종목·시세 | `get_stock_info`, `list_stocks`, `get_stock_warnings`, `get_prices`, `get_orderbook`, `get_recent_trades`, `get_price_limits`, `get_candles` |
+| 종목 동향 | `get_stock_investor_trading`, `get_stock_program_trades`, `get_stock_short_selling`, `get_stock_credit_trades`, `get_stock_securities_lending` |
+| 시장 정보 | `get_exchange_rate`, `get_market_calendar`, `get_rankings`, `get_market_indicator_prices`, `get_market_indicator_candles`, `get_market_indicator_investor_trading` |
 | 계좌·자산 | `list_accounts`, `get_holdings`, `get_buying_power`, `get_sellable_quantity`, `get_commissions` |
-| 주문 조회 | `list_orders`, `get_order` |
+| 주문 조회 | `list_orders`, `get_order`, `list_conditional_orders`, `get_conditional_order` |
+
+공식 OpenAPI의 조건주문 생성·수정·취소는 일반 주문에 적용된 preview, 별도 사람 승인,
+실행 직전 재검증이 아직 구현되지 않아 MCP 도구로 노출하지 않습니다.
 
 ## 거래 모드
 

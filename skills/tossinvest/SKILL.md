@@ -36,13 +36,19 @@ account and supported Korean or US market data. Hermes may prefix tool names wit
 ## Select tools economically
 
 - For a simple current-price request, call `get_prices` directly.
-- Call `get_stock_info` when symbol identity, market, security type, or currency is ambiguous.
+- Call `list_stocks` to build a market universe; call `get_stock_info` when symbol identity,
+  market, security type, or currency is ambiguous.
 - Add `get_orderbook`, `get_recent_trades`, or `get_candles` only when the requested analysis needs
   them.
+- Use the stock trend tools for investor, program-trading, short-selling, credit-trade, or
+  securities-lending history, and preserve their upstream freshness limitations.
+- Use `get_rankings` for ranked universes and the market-indicator tools for Korean indices,
+  government-bond yields, or KRX investor trading amounts.
 - Call `get_stock_warnings` before discussing trading restrictions or a possible purchase.
 - Call `get_market_calendar` before reasoning about whether a market session is open.
 - Use `get_holdings`, `get_buying_power`, or `get_sellable_quantity` for account availability.
-- Use `list_orders`, then `get_order` when an exact order state or execution detail is needed.
+- Use `list_orders`, then `get_order` when an exact order state or execution detail is needed. Use
+  the corresponding conditional-order read tools for conditional-order status.
 - Use `get_commissions` instead of estimating fees from memory.
 
 ## Report results

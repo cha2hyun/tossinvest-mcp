@@ -29,7 +29,13 @@ from .test_service import StubClient
 
 READ_TOOL_NAMES = {
     "get_stock_info",
+    "list_stocks",
     "get_stock_warnings",
+    "get_stock_investor_trading",
+    "get_stock_program_trades",
+    "get_stock_short_selling",
+    "get_stock_credit_trades",
+    "get_stock_securities_lending",
     "get_prices",
     "get_orderbook",
     "get_recent_trades",
@@ -37,10 +43,16 @@ READ_TOOL_NAMES = {
     "get_candles",
     "get_exchange_rate",
     "get_market_calendar",
+    "get_rankings",
+    "get_market_indicator_prices",
+    "get_market_indicator_candles",
+    "get_market_indicator_investor_trading",
     "list_accounts",
     "get_holdings",
     "list_orders",
     "get_order",
+    "list_conditional_orders",
+    "get_conditional_order",
     "get_buying_power",
     "get_sellable_quantity",
     "get_commissions",
@@ -375,6 +387,9 @@ async def test_date_and_datetime_inputs_use_openapi_formats(settings: Settings) 
     assert formats("get_exchange_rate", "date_time") == {"date-time"}
     assert formats("get_market_calendar", "date") == {"date"}
     assert formats("list_orders", "from_date") == {"date"}
+    assert formats("get_stock_investor_trading", "until") == {"date"}
+    assert formats("get_market_indicator_candles", "before") == {"date-time"}
+    assert formats("get_market_indicator_investor_trading", "until") == {"date"}
 
 
 @pytest.mark.asyncio

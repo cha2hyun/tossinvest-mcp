@@ -27,9 +27,33 @@
     "kind": "tool",
     "tools": ["get_stock_info"]
   },
+  "listStocks": {
+    "kind": "tool",
+    "tools": ["list_stocks"]
+  },
   "getStockWarnings": {
     "kind": "tool",
     "tools": ["get_stock_warnings"]
+  },
+  "getStockInvestorTrading": {
+    "kind": "tool",
+    "tools": ["get_stock_investor_trading"]
+  },
+  "getStockProgramTrades": {
+    "kind": "tool",
+    "tools": ["get_stock_program_trades"]
+  },
+  "getStockShortSelling": {
+    "kind": "tool",
+    "tools": ["get_stock_short_selling"]
+  },
+  "getStockCreditTrades": {
+    "kind": "tool",
+    "tools": ["get_stock_credit_trades"]
+  },
+  "getStockSecuritiesLending": {
+    "kind": "tool",
+    "tools": ["get_stock_securities_lending"]
   },
   "getExchangeRate": {
     "kind": "tool",
@@ -42,6 +66,22 @@
   "getUsMarketCalendar": {
     "kind": "tool",
     "tools": ["get_market_calendar"]
+  },
+  "getRankings": {
+    "kind": "tool",
+    "tools": ["get_rankings"]
+  },
+  "getMarketIndicatorPrices": {
+    "kind": "tool",
+    "tools": ["get_market_indicator_prices"]
+  },
+  "getMarketIndicatorCandles": {
+    "kind": "tool",
+    "tools": ["get_market_indicator_candles"]
+  },
+  "getMarketIndicatorInvestorTrading": {
+    "kind": "tool",
+    "tools": ["get_market_indicator_investor_trading"]
   },
   "getAccounts": {
     "kind": "tool",
@@ -62,6 +102,26 @@
   "getOrder": {
     "kind": "tool",
     "tools": ["get_order"]
+  },
+  "getConditionalOrders": {
+    "kind": "tool",
+    "tools": ["list_conditional_orders"]
+  },
+  "getConditionalOrder": {
+    "kind": "tool",
+    "tools": ["get_conditional_order"]
+  },
+  "createConditionalOrder": {
+    "kind": "unsupported",
+    "reason": "Conditional-order creation requires preview, human approval, and revalidation safeguards before MCP exposure."
+  },
+  "modifyConditionalOrder": {
+    "kind": "unsupported",
+    "reason": "Conditional-order modification requires preview, human approval, and revalidation safeguards before MCP exposure."
+  },
+  "cancelConditionalOrder": {
+    "kind": "unsupported",
+    "reason": "Conditional-order cancellation requires preview, human approval, and revalidation safeguards before MCP exposure."
   },
   "modifyOrder": {
     "kind": "tool",

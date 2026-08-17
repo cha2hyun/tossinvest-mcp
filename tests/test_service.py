@@ -101,6 +101,21 @@ class StubClient:
         return True
 
 
+class RecordingClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append({"method": method, "path": path, **kwargs})
+        return {"data": [], "meta": {}}
+
+    async def aclose(self) -> None:
+        return None
+
+    async def is_ready(self) -> bool:
+        return True
+
+
 class FailingLookupClient(StubClient):
     async def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         if path == "/api/v1/orders/order-1":
@@ -144,6 +159,58 @@ class UsStockClient(StubClient):
                 "meta": {},
             }
         return await super().request(method, path, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_new_openapi_read_operations_route_to_expected_groups(
+    settings: Settings,
+) -> None:
+    client = RecordingClient()
+    service = TossInvestService(settings, client)
+
+    await service.list_stocks("KOSPI", security_type="STOCK", common_share=True)
+    await service.get_stock_investor_trading("005930", 5, "2026-08-14")
+    await service.get_stock_program_trades("005930")
+    await service.get_stock_short_selling("005930")
+    await service.get_stock_credit_trades("005930")
+    await service.get_stock_securities_lending("005930")
+    await service.get_rankings("TOP_GAINERS", "KR", "1d", True, 20)
+    await service.get_market_indicator_prices("KOSPI,KR_BOND_3Y")
+    await service.get_market_indicator_candles("KOSPI", "1d", 20, "2026-08-17T00:00:00Z")
+    await service.get_market_indicator_investor_trading("KOSPI", "1w", 5, "2026-08-14")
+    await service.list_conditional_orders("OPEN", "005930", "next_cursor", 10)
+    await service.get_conditional_order("conditional-1")
+
+    assert [(call["path"], call["group"]) for call in client.calls] == [
+        ("/api/v1/stocks/all", "STOCK_ALL"),
+        ("/api/v1/stocks/005930/investor-trading", "STOCK_TRADING_TREND"),
+        ("/api/v1/stocks/005930/program-trades", "STOCK_TRADING_TREND"),
+        ("/api/v1/stocks/005930/short-selling", "STOCK_TRADING_TREND"),
+        ("/api/v1/stocks/005930/credit-trades", "STOCK_TRADING_TREND"),
+        ("/api/v1/stocks/005930/securities-lending", "STOCK_TRADING_TREND"),
+        ("/api/v1/rankings", "RANKING"),
+        ("/api/v1/market-indicators/prices", "MARKET_INDICATOR"),
+        ("/api/v1/market-indicators/KOSPI/candles", "MARKET_INDICATOR_CHART"),
+        ("/api/v1/market-indicators/KOSPI/investor-trading", "MARKET_INDICATOR"),
+        ("/api/v1/conditional-orders", "CONDITIONAL_ORDER_HISTORY"),
+        ("/api/v1/conditional-orders/conditional-1", "CONDITIONAL_ORDER_HISTORY"),
+    ]
+    assert client.calls[0]["params"] == {
+        "market": "KOSPI",
+        "status": "ACTIVE",
+        "securityType": "STOCK",
+        "commonShare": True,
+    }
+    assert client.calls[1]["params"] == {"count": 5, "until": "2026-08-14"}
+    assert client.calls[6]["params"] == {
+        "type": "TOP_GAINERS",
+        "marketCountry": "KR",
+        "duration": "1d",
+        "excludeInvestmentCaution": True,
+        "count": 20,
+    }
+    assert client.calls[10]["account_required"] is True
+    assert client.calls[11]["account_required"] is True
 
 
 @pytest.mark.asyncio

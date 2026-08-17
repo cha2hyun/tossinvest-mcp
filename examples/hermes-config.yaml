@@ -13,7 +13,13 @@ mcp_servers:
     tools:
       include:
         - get_stock_info
+        - list_stocks
         - get_stock_warnings
+        - get_stock_investor_trading
+        - get_stock_program_trades
+        - get_stock_short_selling
+        - get_stock_credit_trades
+        - get_stock_securities_lending
         - get_prices
         - get_orderbook
         - get_recent_trades
@@ -21,10 +27,16 @@ mcp_servers:
         - get_candles
         - get_exchange_rate
         - get_market_calendar
+        - get_rankings
+        - get_market_indicator_prices
+        - get_market_indicator_candles
+        - get_market_indicator_investor_trading
         - list_accounts
         - get_holdings
         - list_orders
         - get_order
+        - list_conditional_orders
+        - get_conditional_order
         - get_buying_power
         - get_sellable_quantity
         - get_commissions

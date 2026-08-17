@@ -4,17 +4,26 @@ import asyncio
 import time
 from dataclasses import dataclass
 
+# Time-varying groups use their most restrictive published limit.
 RATE_LIMITS: dict[str, float] = {
     "AUTH": 5,
     "ACCOUNT": 1,
     "ASSET": 5,
     "STOCK": 5,
+    "STOCK_ALL": 1,
+    "STOCK_TRADING_TREND": 10,
     "MARKET_INFO": 3,
-    "MARKET_DATA": 10,
-    "MARKET_DATA_CHART": 5,
-    "ORDER": 3,
+    "MARKET_DATA": 15,
+    "MARKET_DATA_CHART": 20,
+    "RANKING": 5,
+    "MARKET_INDICATOR_PRICE": 10,
+    "MARKET_INDICATOR": 10,
+    "MARKET_INDICATOR_CHART": 5,
+    "ORDER": 10,
     "ORDER_HISTORY": 5,
     "ORDER_INFO": 3,
+    "CONDITIONAL_ORDER": 5,
+    "CONDITIONAL_ORDER_HISTORY": 10,
 }
 
 

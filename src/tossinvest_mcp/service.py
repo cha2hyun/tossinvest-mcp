@@ -12,6 +12,46 @@ from tossinvest_mcp.previews import Preview, PreviewStore
 from tossinvest_mcp.settings import Settings
 
 Market = Literal["KR", "US"]
+StockMarket = Literal[
+    "KOSPI",
+    "KOSDAQ",
+    "NYSE",
+    "NASDAQ",
+    "AMEX",
+    "KR_ETC",
+    "US_ETC",
+]
+StockStatus = Literal["SCHEDULED", "ACTIVE", "DELISTED"]
+SecurityType = Literal[
+    "STOCK",
+    "FOREIGN_STOCK",
+    "DEPOSITARY_RECEIPT",
+    "INFRASTRUCTURE_FUND",
+    "REIT",
+    "ETF",
+    "FOREIGN_ETF",
+    "ETN",
+    "STOCK_WARRANTS",
+]
+RankingType = Literal[
+    "MARKET_TRADING_AMOUNT",
+    "MARKET_TRADING_VOLUME",
+    "TOP_GAINERS",
+    "TOP_LOSERS",
+    "TOSS_SECURITIES_TRADING_AMOUNT",
+    "TOSS_SECURITIES_TRADING_VOLUME",
+]
+RankingDuration = Literal["realtime", "1d", "1w", "1mo", "3mo", "6mo", "1y"]
+MarketIndicator = Literal[
+    "KOSPI",
+    "KOSDAQ",
+    "KR_BOND_2Y",
+    "KR_BOND_3Y",
+    "KR_BOND_5Y",
+    "KR_BOND_10Y",
+    "KR_BOND_20Y",
+    "KR_BOND_30Y",
+]
 
 HIGH_VALUE_KRW_LIMIT = Decimal("100000000")
 
@@ -38,11 +78,84 @@ class TossInvestService:
             params={"symbols": self._validated_symbols(symbols)},
         )
 
+    async def list_stocks(
+        self,
+        market: StockMarket,
+        status: StockStatus = "ACTIVE",
+        security_type: SecurityType | None = None,
+        common_share: bool | None = None,
+    ) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            "/api/v1/stocks/all",
+            group="STOCK_ALL",
+            params={
+                "market": market,
+                "status": status,
+                "securityType": security_type,
+                "commonShare": common_share,
+            },
+        )
+
     async def get_stock_warnings(self, symbol: str) -> dict[str, Any]:
         return await self.client.request(
             "GET",
             f"/api/v1/stocks/{symbol}/warnings",
             group="STOCK",
+        )
+
+    async def get_stock_investor_trading(
+        self,
+        symbol: str,
+        count: int = 10,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._get_stock_trading_trend(symbol, "investor-trading", count, until)
+
+    async def get_stock_program_trades(
+        self,
+        symbol: str,
+        count: int = 10,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._get_stock_trading_trend(symbol, "program-trades", count, until)
+
+    async def get_stock_short_selling(
+        self,
+        symbol: str,
+        count: int = 10,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._get_stock_trading_trend(symbol, "short-selling", count, until)
+
+    async def get_stock_credit_trades(
+        self,
+        symbol: str,
+        count: int = 10,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._get_stock_trading_trend(symbol, "credit-trades", count, until)
+
+    async def get_stock_securities_lending(
+        self,
+        symbol: str,
+        count: int = 10,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._get_stock_trading_trend(symbol, "securities-lending", count, until)
+
+    async def _get_stock_trading_trend(
+        self,
+        symbol: str,
+        endpoint: str,
+        count: int,
+        until: str | None,
+    ) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            f"/api/v1/stocks/{symbol}/{endpoint}",
+            group="STOCK_TRADING_TREND",
+            params={"count": count, "until": until},
         )
 
     async def get_prices(self, symbols: str) -> dict[str, Any]:
@@ -123,6 +236,63 @@ class TossInvestService:
             params={"date": date},
         )
 
+    async def get_rankings(
+        self,
+        ranking_type: RankingType,
+        market_country: Market,
+        duration: RankingDuration,
+        exclude_investment_caution: bool = False,
+        count: int = 100,
+    ) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            "/api/v1/rankings",
+            group="RANKING",
+            params={
+                "type": ranking_type,
+                "marketCountry": market_country,
+                "duration": duration,
+                "excludeInvestmentCaution": exclude_investment_caution,
+                "count": count,
+            },
+        )
+
+    async def get_market_indicator_prices(self, symbols: str) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            "/api/v1/market-indicators/prices",
+            group="MARKET_INDICATOR",
+            params={"symbols": symbols},
+        )
+
+    async def get_market_indicator_candles(
+        self,
+        symbol: MarketIndicator,
+        interval: Literal["1m", "1d"],
+        count: int = 100,
+        before: str | None = None,
+    ) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            f"/api/v1/market-indicators/{symbol}/candles",
+            group="MARKET_INDICATOR_CHART",
+            params={"interval": interval, "count": count, "before": before},
+        )
+
+    async def get_market_indicator_investor_trading(
+        self,
+        symbol: Literal["KOSPI", "KOSDAQ"],
+        interval: Literal["1d", "1w", "1mo", "1y"],
+        count: int = 10,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            f"/api/v1/market-indicators/{symbol}/investor-trading",
+            group="MARKET_INDICATOR",
+            params={"interval": interval, "count": count, "until": until},
+        )
+
     async def list_accounts(self) -> dict[str, Any]:
         response = await self.client.request("GET", "/api/v1/accounts", group="ACCOUNT")
         accounts = response.get("data")
@@ -191,6 +361,34 @@ class TossInvestService:
             "GET",
             f"/api/v1/orders/{order_id}",
             group="ORDER_HISTORY",
+            account_required=True,
+        )
+
+    async def list_conditional_orders(
+        self,
+        status: Literal["OPEN", "CLOSED"],
+        symbol: str | None = None,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            "/api/v1/conditional-orders",
+            group="CONDITIONAL_ORDER_HISTORY",
+            params={
+                "status": status,
+                "symbol": symbol,
+                "cursor": cursor,
+                "limit": limit,
+            },
+            account_required=True,
+        )
+
+    async def get_conditional_order(self, conditional_order_id: str) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            f"/api/v1/conditional-orders/{conditional_order_id}",
+            group="CONDITIONAL_ORDER_HISTORY",
             account_required=True,
         )
 

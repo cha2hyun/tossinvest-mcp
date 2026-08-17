@@ -38,7 +38,15 @@ from tossinvest_mcp.models import (
     OrderPreviewRequest,
     PreviewResponse,
 )
-from tossinvest_mcp.service import TossInvestService
+from tossinvest_mcp.service import (
+    MarketIndicator,
+    RankingDuration,
+    RankingType,
+    SecurityType,
+    StockMarket,
+    StockStatus,
+    TossInvestService,
+)
 from tossinvest_mcp.settings import Settings
 from tossinvest_mcp.tenants import TenantServiceRegistry
 
@@ -56,9 +64,20 @@ Symbols = Annotated[
         description="One to 200 comma-separated KRX symbols or US tickers.",
     ),
 ]
+MarketIndicatorSymbols = Annotated[
+    str,
+    Field(
+        pattern=r"^[A-Za-z0-9_,]+$",
+        description="One or more comma-separated market-indicator symbols.",
+    ),
+]
 OrderId = Annotated[
     str,
     Field(min_length=1, max_length=256, description="Toss Securities order ID."),
+]
+ConditionalOrderId = Annotated[
+    str,
+    Field(min_length=1, max_length=256, description="Toss Securities conditional-order ID."),
 ]
 PreviewId = Annotated[
     str,
@@ -316,9 +335,139 @@ def create_mcp(
         annotations=READ_ANNOTATIONS,
         output_schema=API_RESPONSE_SCHEMA,
     )
+    async def list_stocks(
+        market: Annotated[StockMarket, Field(description="Exchange market to enumerate.")],
+        status: Annotated[
+            StockStatus,
+            Field(description="Listing status to include."),
+        ] = "ACTIVE",
+        security_type: Annotated[
+            SecurityType | None,
+            Field(description="Optional security-type filter."),
+        ] = None,
+        common_share: Annotated[
+            bool | None,
+            Field(description="Optionally restrict results by common-share status."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """List all tradable stocks for one market, with optional universe filters."""
+        return await service_call(
+            "list_stocks",
+            market,
+            status,
+            security_type,
+            common_share,
+        )
+
+    @mcp.tool(
+        tags={"market", "read"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
     async def get_stock_warnings(symbol: Symbol) -> dict[str, Any]:
         """Return trading warnings and restrictions for a stock."""
         return await service_call("get_stock_warnings", symbol)
+
+    @mcp.tool(
+        tags={"market", "read", "trend"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_stock_investor_trading(
+        symbol: Symbol,
+        count: Annotated[int, Field(ge=1, le=100)] = 10,
+        until: Annotated[
+            Date | None,
+            Field(description="Optional inclusive pagination date."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return daily investor-category trading trends for a Korean stock."""
+        return await service_call(
+            "get_stock_investor_trading",
+            symbol,
+            count,
+            until.isoformat() if until is not None else None,
+        )
+
+    @mcp.tool(
+        tags={"market", "read", "trend"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_stock_program_trades(
+        symbol: Symbol,
+        count: Annotated[int, Field(ge=1, le=100)] = 10,
+        until: Annotated[
+            Date | None, Field(description="Optional inclusive pagination date.")
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return daily program-trading trends for a Korean stock."""
+        return await service_call(
+            "get_stock_program_trades",
+            symbol,
+            count,
+            until.isoformat() if until is not None else None,
+        )
+
+    @mcp.tool(
+        tags={"market", "read", "trend"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_stock_short_selling(
+        symbol: Symbol,
+        count: Annotated[int, Field(ge=1, le=100)] = 10,
+        until: Annotated[
+            Date | None, Field(description="Optional inclusive pagination date.")
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return daily short-selling trends for a Korean stock."""
+        return await service_call(
+            "get_stock_short_selling",
+            symbol,
+            count,
+            until.isoformat() if until is not None else None,
+        )
+
+    @mcp.tool(
+        tags={"market", "read", "trend"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_stock_credit_trades(
+        symbol: Symbol,
+        count: Annotated[int, Field(ge=1, le=100)] = 10,
+        until: Annotated[
+            Date | None, Field(description="Optional inclusive pagination date.")
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return daily margin-loan and stock-loan trends for a Korean stock."""
+        return await service_call(
+            "get_stock_credit_trades",
+            symbol,
+            count,
+            until.isoformat() if until is not None else None,
+        )
+
+    @mcp.tool(
+        tags={"market", "read", "trend"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_stock_securities_lending(
+        symbol: Symbol,
+        count: Annotated[int, Field(ge=1, le=100)] = 10,
+        until: Annotated[
+            Date | None, Field(description="Optional inclusive pagination date.")
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return daily securities-lending trends for a Korean stock."""
+        return await service_call(
+            "get_stock_securities_lending",
+            symbol,
+            count,
+            until.isoformat() if until is not None else None,
+        )
 
     @mcp.tool(
         tags={"market", "read"},
@@ -379,7 +528,7 @@ def create_mcp(
         ] = 100,
         before: Annotated[
             DateTime | None,
-            Field(description="Optional exclusive ISO 8601 upper time bound."),
+            Field(description="Optional inclusive ISO 8601 upper time bound."),
         ] = None,
         adjusted: Annotated[
             bool,
@@ -443,6 +592,98 @@ def create_mcp(
             "get_market_calendar",
             market,
             date.isoformat() if date is not None else None,
+        )
+
+    @mcp.tool(
+        tags={"market", "read", "ranking"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_rankings(
+        ranking_type: Annotated[RankingType, Field(description="Ranking metric.")],
+        market_country: Annotated[
+            Literal["KR", "US"],
+            Field(description="Korean or US market universe."),
+        ],
+        duration: Annotated[RankingDuration, Field(description="Ranking aggregation period.")],
+        exclude_investment_caution: Annotated[
+            bool,
+            Field(description="Exclude stocks carrying investment-caution designations."),
+        ] = False,
+        count: Annotated[int, Field(ge=1, le=100)] = 100,
+    ) -> dict[str, Any]:
+        """Return a stock ranking for a market, period, and ranking metric."""
+        return await service_call(
+            "get_rankings",
+            ranking_type,
+            market_country,
+            duration,
+            exclude_investment_caution,
+            count,
+        )
+
+    @mcp.tool(
+        tags={"market", "read", "indicator"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_market_indicator_prices(symbols: MarketIndicatorSymbols) -> dict[str, Any]:
+        """Return current prices for supported Korean indices and government bonds."""
+        return await service_call("get_market_indicator_prices", symbols)
+
+    @mcp.tool(
+        tags={"market", "read", "indicator"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_market_indicator_candles(
+        symbol: Annotated[MarketIndicator, Field(description="Supported market-indicator symbol.")],
+        interval: Annotated[
+            Literal["1m", "1d"],
+            Field(description="One-minute or daily candle interval."),
+        ],
+        count: Annotated[int, Field(ge=1, le=200)] = 100,
+        before: Annotated[
+            DateTime | None,
+            Field(description="Optional inclusive ISO 8601 upper time bound."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return candles for a supported Korean index or government bond."""
+        return await service_call(
+            "get_market_indicator_candles",
+            symbol,
+            interval,
+            count,
+            before.isoformat() if before is not None else None,
+        )
+
+    @mcp.tool(
+        tags={"market", "read", "indicator"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_market_indicator_investor_trading(
+        symbol: Annotated[
+            Literal["KOSPI", "KOSDAQ"],
+            Field(description="Korean index whose investor trading amounts are requested."),
+        ],
+        interval: Annotated[
+            Literal["1d", "1w", "1mo", "1y"],
+            Field(description="Aggregation interval."),
+        ],
+        count: Annotated[int, Field(ge=1, le=100)] = 10,
+        until: Annotated[
+            Date | None,
+            Field(description="Optional inclusive pagination date."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Return investor-category trading amounts for KOSPI or KOSDAQ."""
+        return await service_call(
+            "get_market_indicator_investor_trading",
+            symbol,
+            interval,
+            count,
+            until.isoformat() if until is not None else None,
         )
 
     @mcp.tool(
@@ -519,6 +760,43 @@ def create_mcp(
     async def get_order(order_id: OrderId) -> dict[str, Any]:
         """Return one order and its latest execution state."""
         return await service_call("get_order", order_id)
+
+    @mcp.tool(
+        tags={"order-history", "read", "conditional-order"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def list_conditional_orders(
+        status: Annotated[
+            Literal["OPEN", "CLOSED"],
+            Field(description="Open or closed conditional orders."),
+        ],
+        symbol: Symbol | None = None,
+        cursor: Annotated[
+            str | None,
+            Field(pattern=r"^[A-Za-z0-9_\-]+$", description="Opaque pagination cursor."),
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=100)] = 20,
+    ) -> dict[str, Any]:
+        """List conditional orders for the configured account."""
+        return await service_call(
+            "list_conditional_orders",
+            status,
+            symbol,
+            cursor,
+            limit,
+        )
+
+    @mcp.tool(
+        tags={"order-history", "read", "conditional-order"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_conditional_order(
+        conditional_order_id: ConditionalOrderId,
+    ) -> dict[str, Any]:
+        """Return one conditional order for the configured account."""
+        return await service_call("get_conditional_order", conditional_order_id)
 
     @mcp.tool(
         tags={"account", "read"},
