@@ -13,6 +13,32 @@ OPENAPI_URL = "https://openapi.tossinvest.com/openapi-docs/latest/openapi.json"
 MANIFEST_PATH = Path(__file__).resolve().parents[1] / "openapi" / "operation-manifest.json"
 TOOL_MAP_PATH = Path(__file__).resolve().parents[1] / "openapi" / "tool-map.json"
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+DOCUMENTATION_KEYS = {
+    "description",
+    "example",
+    "examples",
+    "externalDocs",
+    "summary",
+    "tags",
+    "title",
+}
+CONTRACT_TOP_LEVEL_KEYS = {
+    "components",
+    "jsonSchemaDialect",
+    "openapi",
+    "paths",
+    "security",
+    "servers",
+    "webhooks",
+}
+NAMED_SCHEMA_MAP_KEYS = {
+    "$defs",
+    "definitions",
+    "dependentSchemas",
+    "patternProperties",
+    "properties",
+    "schemas",
+}
 
 
 def fetch_openapi() -> dict[str, Any]:
@@ -27,6 +53,37 @@ def fetch_openapi() -> dict[str, Any]:
     return payload
 
 
+def canonical_sha256(document: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        document,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def contract_document(document: dict[str, Any]) -> dict[str, Any]:
+    """Return the REST contract without documentation-only OpenAPI annotations."""
+
+    def strip_documentation(value: Any, *, preserve_names: bool = False) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: strip_documentation(
+                    item,
+                    preserve_names=key in NAMED_SCHEMA_MAP_KEYS,
+                )
+                for key, item in value.items()
+                if preserve_names or key not in DOCUMENTATION_KEYS
+            }
+        if isinstance(value, list):
+            return [strip_documentation(item) for item in value]
+        return value
+
+    contract = {key: value for key, value in document.items() if key in CONTRACT_TOP_LEVEL_KEYS}
+    return strip_documentation(contract)
+
+
 def build_manifest(document: dict[str, Any]) -> dict[str, Any]:
     operations = []
     operation_ids = []
@@ -35,18 +92,39 @@ def build_manifest(document: dict[str, Any]) -> dict[str, Any]:
             if method.lower() in HTTP_METHODS:
                 operations.append(f"{method.upper()} {path}")
                 operation_ids.append(str(operation["operationId"]))
-    canonical = json.dumps(
-        document,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode()
     return {
         "version": str(document["info"]["version"]),
-        "schema_sha256": hashlib.sha256(canonical).hexdigest(),
+        "schema_sha256": canonical_sha256(document),
+        "contract_sha256": canonical_sha256(contract_document(document)),
         "operations": sorted(operations),
         "operation_ids": sorted(operation_ids),
     }
+
+
+def contract_changed(current: dict[str, Any], expected: dict[str, Any]) -> bool:
+    contract_fields = ("version", "contract_sha256", "operations", "operation_ids")
+    return any(current.get(field) != expected.get(field) for field in contract_fields)
+
+
+def report_contract_changes(current: dict[str, Any], expected: dict[str, Any]) -> None:
+    if current.get("version") != expected.get("version"):
+        print(
+            f"Version changed: {expected.get('version')} -> {current.get('version')}",
+            file=sys.stderr,
+        )
+
+    for field, label in (("operations", "operations"), ("operation_ids", "operation IDs")):
+        old_values = set(expected.get(field, []))
+        new_values = set(current.get(field, []))
+        added = sorted(new_values - old_values)
+        removed = sorted(old_values - new_values)
+        if added:
+            print(f"Added {label}: {added}", file=sys.stderr)
+        if removed:
+            print(f"Removed {label}: {removed}", file=sys.stderr)
+
+    if current.get("contract_sha256") != expected.get("contract_sha256"):
+        print("REST request/response schemas or security requirements changed.", file=sys.stderr)
 
 
 def validate_tool_map(manifest: dict[str, Any]) -> bool:
@@ -81,15 +159,17 @@ def main() -> int:
         return 0
 
     expected = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    if current != expected:
+    if contract_changed(current, expected):
         print("Official Toss Securities OpenAPI changed.", file=sys.stderr)
+        report_contract_changes(current, expected)
         print("Review it, then run this script with --update.", file=sys.stderr)
         return 1
+    if current["schema_sha256"] != expected.get("schema_sha256"):
+        print("OpenAPI documentation changed; the REST contract is unchanged.")
     version = current["version"]
     operation_count = len(current["operations"])
     print(
-        f"OpenAPI contract matches version {version} "
-        f"({operation_count} ops, full schema fingerprint)"
+        f"OpenAPI contract matches version {version} ({operation_count} ops, contract fingerprint)"
     )
     return 0
 
