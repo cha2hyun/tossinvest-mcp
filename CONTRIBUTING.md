@@ -27,3 +27,8 @@ Rules:
 - Use Conventional Commit messages.
 - Update the OpenAPI manifest with `uv run python scripts/update_openapi.py --update` only after
   reviewing the official specification change.
+
+## Releases
+
+See [RELEASING.md](RELEASING.md) for the versioning, validation, tagging, and automated GitHub
+Release process. Release tags are immutable and must match the package version exactly.

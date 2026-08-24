@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
 
 import tossinvest_mcp.service as service_module
+from tossinvest_mcp import __version__
 from tossinvest_mcp.rate_limit import RATE_LIMITS
 from tossinvest_mcp.server import create_mcp
 from tossinvest_mcp.settings import Settings
@@ -15,6 +17,12 @@ from tossinvest_mcp.settings import Settings
 from .test_service import StubClient
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_package_version_has_one_consistent_release_value() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert project["project"]["version"] == __version__
 
 
 def test_rate_limiter_covers_every_service_api_group() -> None:
