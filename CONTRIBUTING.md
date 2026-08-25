@@ -9,10 +9,12 @@ uv sync --all-extras
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src
+uv run mypy src scripts tests
 uv run python scripts/check_docs.py
 uv run python scripts/validate_skills.py
 uv run python scripts/update_openapi.py --check
+uv run pip-audit --strict .
+uv build
 docker build .
 ```
 

@@ -23,6 +23,8 @@
 - non-root, read-only filesystem, capability 제거가 적용된 Docker Compose
 - 조회·거래 workflow를 분리한 Hermes Skill
 - Ruff, mypy, pytest, dependency audit, secret scan, OpenAPI drift와 Docker build CI
+- Semantic Versioning 태그로 wheel, source distribution, checksum, amd64/arm64 GHCR 이미지와
+  GitHub Release를 게시하는 자동 릴리즈 workflow
 
 ## 설계 경계
 
@@ -37,6 +39,7 @@
 - 공식 OpenAPI 변경은 `scripts/update_openapi.py --check`로 감지하고 검토 후 manifest를
   갱신한다.
 - 문서, 환경변수 예제와 Skill은 CI에서 의미적 드리프트를 검사한다.
+- 운영 배포는 최신 GitHub Release의 전체 버전 태그 또는 image digest를 고정한다.
 - 보안과 에이전트 사용성 개선 내역은 [IMPROVEMENTS.md](IMPROVEMENTS.md)에서 추적한다.
 - 라이브 주문과 관련된 변경은 인증, 승인, 한도, 재검증과 재시도 금지 회귀 테스트를 반드시
   포함한다.

@@ -24,13 +24,27 @@ tool arguments or schemas.
 
 ## Quick start
 
+For production, pin the current stable
+[`v0.1.1`](https://github.com/cha2hyun/tossinvest-mcp/releases/tag/v0.1.1) release instead of the
+moving `main` branch or `latest` image tag.
+
 ```bash
-git clone https://github.com/cha2hyun/tossinvest-mcp.git
+git clone --branch v0.1.1 --depth 1 https://github.com/cha2hyun/tossinvest-mcp.git
 cd tossinvest-mcp
 cp .env.example .env
 docker compose up -d --build
 curl http://127.0.0.1:8000/healthz
 ```
+
+Each GitHub Release includes a Python wheel, source distribution, and SHA-256 checksums. To use the
+published multi-architecture GHCR image without rebuilding it locally, pin the complete version:
+
+```bash
+TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.1 docker compose pull
+TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.1 docker compose up -d --no-build
+```
+
+The `latest` tag moves with every release. See [RELEASING.md](RELEASING.md) for the release policy.
 
 The server `.env` contains non-secret operational settings only. Store Toss credentials in the MCP
 client's secret store. For Hermes, copy [`examples/hermes.env.example`](examples/hermes.env.example)
@@ -93,6 +107,18 @@ For VS Code, use [`examples/vscode-mcp.json`](examples/vscode-mcp.json). The tra
 Do not write actual credentials in JSON. VS Code stores prompted inputs securely and sends them as
 connection headers, outside model-generated tool arguments. Remote URLs must use HTTPS.
 
+## Tools
+
+Read-only mode exposes 28 tools covering stock metadata and warnings; prices, order books, trades,
+candles, and limits; investor, program, short-selling, credit, and securities-lending activity;
+exchange rates, market calendars, rankings, and market indicators; accounts, holdings, buying
+power, sellable quantity, and commissions; and regular or conditional order history.
+
+Trading mode adds six preview and execution tools for creating, modifying, and cancelling regular
+orders, for 34 tools in total. The official API's conditional-order create, modify, and cancel
+operations are intentionally not exposed because they do not yet have the same preview, separate
+human approval, and immediate revalidation safeguards.
+
 ## Trading
 
 Generate a separate human approval token and store its original outside both the MCP server and
@@ -125,12 +151,13 @@ uv sync --all-extras
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src tests
-uv run pip-audit --strict
+uv run mypy src scripts tests
+uv run pip-audit --strict .
 uv run python scripts/check_docs.py
 uv run python scripts/validate_skills.py
 uv run python scripts/update_openapi.py --check
 uv build
 ```
 
-See [SECURITY.md](SECURITY.md) for the threat model and private reporting process.
+See [SECURITY.md](SECURITY.md) for supported versions, the threat model, and private reporting
+process.

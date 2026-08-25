@@ -7,7 +7,7 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 OPENAPI_URL = "https://openapi.tossinvest.com/openapi-docs/latest/openapi.json"
 MANIFEST_PATH = Path(__file__).resolve().parents[1] / "openapi" / "operation-manifest.json"
@@ -44,7 +44,7 @@ NAMED_SCHEMA_MAP_KEYS = {
 def fetch_openapi() -> dict[str, Any]:
     request = urllib.request.Request(  # noqa: S310 - fixed HTTPS source
         OPENAPI_URL,
-        headers={"User-Agent": "tossinvest-mcp-openapi-check/0.1.0"},
+        headers={"User-Agent": "tossinvest-mcp-openapi-check"},
     )
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
         payload = json.load(response)
@@ -81,7 +81,7 @@ def contract_document(document: dict[str, Any]) -> dict[str, Any]:
         return value
 
     contract = {key: value for key, value in document.items() if key in CONTRACT_TOP_LEVEL_KEYS}
-    return strip_documentation(contract)
+    return cast(dict[str, Any], strip_documentation(contract))
 
 
 def build_manifest(document: dict[str, Any]) -> dict[str, Any]:

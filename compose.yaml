@@ -2,7 +2,7 @@ services:
   tossinvest-mcp:
     build:
       context: .
-    image: ghcr.io/cha2hyun/tossinvest-mcp:latest
+    image: "${TOSSINVEST_IMAGE:-ghcr.io/cha2hyun/tossinvest-mcp:latest}"
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8000"

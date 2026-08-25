@@ -33,6 +33,8 @@ with `mcp_tossinvest_`; names below omit that prefix.
 6. Never automatically retry any create, modify, or cancel request.
 7. If the result is `order-state-unknown`, inspect order history before any further write.
 8. Treat a missing trading tool as trading disabled; do not seek another route around it.
+9. Conditional-order creation, modification, and cancellation are unsupported; never substitute a
+   regular-order write tool or another route.
 
 ## Establish exact intent
 

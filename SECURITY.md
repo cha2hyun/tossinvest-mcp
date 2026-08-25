@@ -1,5 +1,11 @@
 # Security Policy
 
+## Supported versions
+
+Only the latest published [GitHub Release](https://github.com/cha2hyun/tossinvest-mcp/releases/latest)
+receives security fixes. Older releases, untagged commits from `main`, and locally modified builds
+are not supported versions. When reporting an issue, include the exact release tag or image digest.
+
 ## Reporting
 
 Do not open a public issue for credential exposure, authentication bypass, order-safety bypass, or

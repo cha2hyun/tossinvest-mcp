@@ -28,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from tossinvest_mcp import __version__
 from tossinvest_mcp.client import TossInvestClientLike
 from tossinvest_mcp.errors import TossInvestError
 from tossinvest_mcp.logging_utils import redact_sensitive_values
@@ -280,7 +281,7 @@ def create_mcp(
     )
     mcp = FastMCP(
         name="TossInvest",
-        version="0.1.0",
+        version=__version__,
         instructions=(
             "Official Toss Securities Open API tools. Prefer read-only tools and never infer a "
             "trade from analysis. Trading tools are absent unless the server is started with the "

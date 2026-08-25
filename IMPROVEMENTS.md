@@ -1,7 +1,7 @@
 # TossInvest MCP 보완 작업 목록
 
 이 문서는 보안 감사와 에이전트 사용성 검토에서 확인한 보완사항을 추적한다.
-아래 항목은 2026-06-19 기준으로 완료했다.
+아래 항목은 2026-06-19 기준으로 완료했고, 2026-08-25 릴리즈 보강 내용을 반영했다.
 
 ## P0 — 실행 안전성과 설정 일관성
 
@@ -31,6 +31,9 @@
 - [x] `PLAN.md`를 구현 계획이 아닌 현재 상태와 향후 작업을 나타내는 문서로 정리한다.
 - [x] `SECURITY.md`에 위협 모델, 지원 버전, 비밀정보 경계와 사고 대응 절차를 추가한다.
 - [x] `CODE_OF_CONDUCT.md`를 표준 행동강령 수준으로 보강한다.
+- [x] Semantic Versioning 기반 GitHub Release, 배포 파일 checksum과 multi-architecture GHCR
+  이미지 게시를 자동화한다.
+- [x] README에 안정 버전 고정 설치와 GHCR 이미지 사용법을 추가한다.
 
 ## P2 — 자동 검증
 
@@ -46,8 +49,9 @@
 - Ruff check 및 format 통과
 - mypy strict 통과
 - 알려진 Python dependency 취약점 없음
-- OpenAPI v1.1.1, 21 operations fingerprint 일치
-- 기본 모드 16개 도구와 쓰기 도구 0개 확인
-- 거래 모드 22개 도구와 쓰기 도구 3개 확인
+- OpenAPI v1.2.14, 36 operations fingerprint 일치
+- 기본 모드 28개 도구와 쓰기 도구 0개 확인
+- 거래 모드 34개 도구와 쓰기 도구 3개 확인
 - 기본·거래 Compose 구성 검증
 - production Docker image build 및 `/healthz` 실행 확인
+- `v0.1.1` GitHub Release와 amd64/arm64 GHCR 이미지 게시

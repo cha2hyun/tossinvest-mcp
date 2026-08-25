@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from tossinvest_mcp import __version__
 from tossinvest_mcp.errors import OrderStateUnknownError, TossInvestError
 from tossinvest_mcp.logging_utils import redact_sensitive_values
 from tossinvest_mcp.rate_limit import RateLimiter
@@ -64,7 +65,7 @@ class TossInvestClient:
         self._http = http_client or httpx.AsyncClient(
             base_url=settings.tossinvest_base_url.rstrip("/"),
             timeout=httpx.Timeout(settings.tossinvest_request_timeout),
-            headers={"User-Agent": "tossinvest-mcp/0.1.0"},
+            headers={"User-Agent": f"tossinvest-mcp/{__version__}"},
         )
         self._owns_http_client = http_client is None
         self._token: _Token | None = None
