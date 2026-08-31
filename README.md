@@ -320,6 +320,11 @@ uv run python scripts/validate_skills.py
 uv run python scripts/update_openapi.py --check
 uv build
 docker build .
+./scripts/run_e2e.sh
 ```
+
+`run_e2e.sh`는 프로덕션 이미지를 기동하고 로컬 가짜 upstream을 통해 MCP HTTP, 요청별
+자격 증명 격리, OAuth, 조회 호출과 오류 redaction을 끝까지 검증합니다. 외부 API나 실제
+자격 증명은 사용하지 않습니다.
 
 보안 문제는 공개 Issue 대신 [SECURITY.md](SECURITY.md)의 절차로 신고하세요.

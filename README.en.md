@@ -157,7 +157,13 @@ uv run python scripts/check_docs.py
 uv run python scripts/validate_skills.py
 uv run python scripts/update_openapi.py --check
 uv build
+docker build .
+./scripts/run_e2e.sh
 ```
+
+`run_e2e.sh` starts the production image and verifies MCP HTTP, request-credential isolation,
+OAuth, a read call, and error redaction through a local fake upstream. It never uses external APIs
+or real credentials.
 
 See [SECURITY.md](SECURITY.md) for supported versions, the threat model, and private reporting
 process.

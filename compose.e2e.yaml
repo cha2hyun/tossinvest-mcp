@@ -1,0 +1,80 @@
+services:
+  fake-toss:
+    image: "${TOSSINVEST_E2E_IMAGE:-tossinvest-mcp:e2e}"
+    command:
+      - python
+      - /e2e/fake_toss_api.py
+    volumes:
+      - ./tests/e2e:/e2e:ro
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/healthz', timeout=2)"
+      interval: 1s
+      timeout: 2s
+      start_period: 1s
+      retries: 20
+
+  tossinvest-mcp:
+    image: "${TOSSINVEST_E2E_IMAGE:-tossinvest-mcp:e2e}"
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      MCP_PUBLISHED_HOST: 127.0.0.1
+      MCP_TRUSTED_PROXY_IPS: 127.0.0.1
+      TOSSINVEST_BASE_URL: http://127.0.0.1:18080
+      TOSSINVEST_REQUEST_TIMEOUT: "5"
+      LOG_LEVEL: INFO
+    network_mode: service:fake-toss
+    depends_on:
+      fake-toss:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
+      interval: 1s
+      timeout: 2s
+      start_period: 2s
+      retries: 30
+
+  e2e-runner:
+    image: "${TOSSINVEST_E2E_IMAGE:-tossinvest-mcp:e2e}"
+    command:
+      - python
+      - /e2e/run_http_e2e.py
+    volumes:
+      - ./tests/e2e:/e2e:ro
+    network_mode: service:fake-toss
+    depends_on:
+      tossinvest-mcp:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true

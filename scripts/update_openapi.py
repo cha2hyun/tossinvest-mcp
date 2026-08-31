@@ -42,7 +42,7 @@ NAMED_SCHEMA_MAP_KEYS = {
 
 
 def fetch_openapi() -> dict[str, Any]:
-    request = urllib.request.Request(  # noqa: S310 - fixed HTTPS source
+    request = urllib.request.Request(
         OPENAPI_URL,
         headers={"User-Agent": "tossinvest-mcp-openapi-check"},
     )

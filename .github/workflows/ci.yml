@@ -12,11 +12,12 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           python-version: "3.12"
+          version: "0.12.7"
       - run: uv sync --frozen --all-extras
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -30,7 +31,7 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Scan Git history with Gitleaks
@@ -47,6 +48,8 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - name: Build the production image
-        run: docker build --tag tossinvest-mcp:ci .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run hermetic Docker E2E
+        env:
+          TOSSINVEST_E2E_IMAGE: tossinvest-mcp:ci
+        run: ./scripts/run_e2e.sh
