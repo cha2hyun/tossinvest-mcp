@@ -25,11 +25,11 @@ tool arguments or schemas.
 ## Quick start
 
 For production, pin the current stable
-[`v0.1.1`](https://github.com/cha2hyun/tossinvest-mcp/releases/tag/v0.1.1) release instead of the
+[`v0.1.2`](https://github.com/cha2hyun/tossinvest-mcp/releases/tag/v0.1.2) release instead of the
 moving `main` branch or `latest` image tag.
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/cha2hyun/tossinvest-mcp.git
+git clone --branch v0.1.2 --depth 1 https://github.com/cha2hyun/tossinvest-mcp.git
 cd tossinvest-mcp
 cp .env.example .env
 docker compose up -d --build
@@ -40,8 +40,8 @@ Each GitHub Release includes a Python wheel, source distribution, and SHA-256 ch
 published multi-architecture GHCR image without rebuilding it locally, pin the complete version:
 
 ```bash
-TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.1 docker compose pull
-TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.1 docker compose up -d --no-build
+TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.2 docker compose pull
+TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.2 docker compose up -d --no-build
 ```
 
 The `latest` tag moves with every release. See [RELEASING.md](RELEASING.md) for the release policy.

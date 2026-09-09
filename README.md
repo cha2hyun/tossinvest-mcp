@@ -54,10 +54,10 @@ flowchart LR
 `client_secret`입니다.
 
 운영 환경에서는 이동하는 `main`이나 `latest` 대신 현재 안정 버전인
-[`v0.1.1`](https://github.com/cha2hyun/tossinvest-mcp/releases/tag/v0.1.1)을 고정하세요.
+[`v0.1.2`](https://github.com/cha2hyun/tossinvest-mcp/releases/tag/v0.1.2)을 고정하세요.
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/cha2hyun/tossinvest-mcp.git
+git clone --branch v0.1.2 --depth 1 https://github.com/cha2hyun/tossinvest-mcp.git
 cd tossinvest-mcp
 cp .env.example .env
 docker compose up -d --build
@@ -68,11 +68,11 @@ GitHub Release에는 Python wheel, source distribution과 SHA-256 checksum이 �
 없이 게시된 multi-architecture GHCR 이미지를 사용하려면 버전을 명시해 실행하세요.
 
 ```bash
-TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.1 docker compose pull
-TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.1 docker compose up -d --no-build
+TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.2 docker compose pull
+TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.2 docker compose up -d --no-build
 ```
 
-`latest`는 새 릴리즈마다 이동합니다. 재현 가능한 배포에는 `0.1.1`처럼 전체 버전 태그를
+`latest`는 새 릴리즈마다 이동합니다. 재현 가능한 배포에는 `0.1.2`처럼 전체 버전 태그를
 사용하세요. 릴리즈 절차는 [RELEASING.md](RELEASING.md)에 정리되어 있습니다.
 
 서버 `.env`에는 포트와 캐시 같은 비밀이 아닌 운영 설정만 둡니다. 토스 키와 계좌값을
