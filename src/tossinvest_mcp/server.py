@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import hashlib
 import html
 import json
 import secrets
 import sys
-import time
-from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date as Date
 from datetime import datetime as DateTime
@@ -39,6 +36,7 @@ from tossinvest_mcp.models import (
     OrderPreviewRequest,
     PreviewResponse,
 )
+from tossinvest_mcp.rate_limit import ApprovalAttemptLimiter
 from tossinvest_mcp.service import (
     MarketIndicator,
     RankingDuration,
@@ -114,55 +112,27 @@ OrderAmount = Annotated[
 ]
 
 READ_ANNOTATIONS = ToolAnnotations(
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=True,
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=True,
 )
 PREVIEW_ANNOTATIONS = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=False,
-    idempotentHint=False,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=True,
 )
 WRITE_ANNOTATIONS = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=True,
 )
 
 API_RESPONSE_SCHEMA = TypeAdapter(ApiResponse).json_schema()
 PREVIEW_RESPONSE_SCHEMA = TypeAdapter(PreviewResponse).json_schema()
 ORDER_EXECUTION_RESPONSE_SCHEMA = TypeAdapter(OrderExecutionResponse).json_schema()
-
-
-class ApprovalAttemptLimiter:
-    """Reject repeated approval submissions instead of waiting through them."""
-
-    def __init__(
-        self,
-        *,
-        limit: int = 10,
-        window_seconds: float = 60.0,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._limit = limit
-        self._window_seconds = window_seconds
-        self._clock = clock
-        self._attempts: dict[str, deque[float]] = defaultdict(deque)
-        self._lock = asyncio.Lock()
-
-    async def allow(self, key: str) -> bool:
-        async with self._lock:
-            now = self._clock()
-            attempts = self._attempts[key]
-            while attempts and attempts[0] <= now - self._window_seconds:
-                attempts.popleft()
-            if len(attempts) >= self._limit:
-                return False
-            attempts.append(now)
-            return True
 
 
 class OriginValidationMiddleware:
@@ -261,11 +231,13 @@ def create_mcp(
 
     @asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[dict[str, Any]]:
-        yield {"service": static_service, "tenant_registry": registry}
-        if static_service is not None:
-            await static_service.client.aclose()
-        if registry is not None:
-            await registry.close()
+        try:
+            yield {"service": static_service, "tenant_registry": registry}
+        finally:
+            if static_service is not None:
+                await static_service.client.aclose()
+            if registry is not None:
+                await registry.close()
 
     verifier = (
         StaticTokenVerifier(
@@ -295,32 +267,34 @@ def create_mcp(
         strict_input_validation=True,
     )
 
-    async def resolve_service() -> TossInvestService:
+    @asynccontextmanager
+    async def resolve_service(preview_id: str | None = None) -> AsyncIterator[TossInvestService]:
         if static_service is not None:
-            return static_service
+            yield static_service
+            return
         assert registry is not None
-        return await registry.current_service()
-
-    async def tool_call(call: Awaitable[dict[str, Any]]) -> dict[str, Any]:
-        try:
-            return cast(dict[str, Any], redact_sensitive_values(await call))
-        except TossInvestError as exc:
-            raise ToolError(json.dumps(exc.as_dict(), ensure_ascii=False)) from exc
-
-    async def resolve_tool_service() -> TossInvestService:
-        try:
-            return await resolve_service()
-        except TossInvestError as exc:
-            raise ToolError(json.dumps(exc.as_dict(), ensure_ascii=False)) from exc
+        context = (
+            registry.current_service()
+            if preview_id is None
+            else registry.service_for_preview(preview_id)
+        )
+        async with context as service:
+            yield service
 
     async def service_call(
         method_name: str,
         *args: Any,
+        register_preview: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        service = await resolve_tool_service()
-        method = getattr(service, method_name)
-        return await tool_call(method(*args, **kwargs))
+        try:
+            async with resolve_service() as service:
+                result = await getattr(service, method_name)(*args, **kwargs)
+                if register_preview and registry is not None:
+                    await registry.register_preview(str(result["preview_id"]), service)
+                return cast(dict[str, Any], redact_sensitive_values(result))
+        except TossInvestError as exc:
+            raise ToolError(json.dumps(exc.as_dict(), ensure_ascii=False)) from exc
 
     @mcp.tool(
         tags={"market", "read"},
@@ -869,11 +843,7 @@ def create_mcp(
                 order_amount=order_amount,
                 time_in_force=time_in_force,
             )
-            service = await resolve_tool_service()
-            result = await tool_call(service.preview_order(request))
-            if registry is not None:
-                await registry.register_preview(str(result["preview_id"]), service)
-            return result
+            return await service_call("preview_order", request, register_preview=True)
 
         @mcp.tool(
             tags={"trading", "write"},
@@ -905,11 +875,7 @@ def create_mcp(
                 quantity=quantity,
                 price=price,
             )
-            service = await resolve_tool_service()
-            result = await tool_call(service.preview_order_modification(request))
-            if registry is not None:
-                await registry.register_preview(str(result["preview_id"]), service)
-            return result
+            return await service_call("preview_order_modification", request, register_preview=True)
 
         @mcp.tool(
             tags={"trading", "write"},
@@ -927,11 +893,7 @@ def create_mcp(
         )
         async def preview_order_cancellation(order_id: OrderId) -> dict[str, Any]:
             """Preview cancellation of an existing order; this does not submit it."""
-            service = await resolve_tool_service()
-            result = await tool_call(service.preview_order_cancellation(order_id))
-            if registry is not None:
-                await registry.register_preview(str(result["preview_id"]), service)
-            return result
+            return await service_call("preview_order_cancellation", order_id, register_preview=True)
 
         @mcp.tool(
             tags={"trading", "write"},
@@ -950,12 +912,8 @@ def create_mcp(
         async def review_approval(request: Request) -> Response:
             preview_id = request.path_params["preview_id"]
             try:
-                if static_service is not None:
-                    service = static_service
-                else:
-                    assert registry is not None
-                    service = await registry.service_for_preview(preview_id)
-                preview = await service.get_preview(preview_id)
+                async with resolve_service(preview_id) as service:
+                    preview = await service.get_preview(preview_id)
             except TossInvestError as exc:
                 return HTMLResponse(
                     _approval_error_page(str(exc)),
@@ -975,17 +933,17 @@ def create_mcp(
         async def submit_approval(request: Request) -> Response:
             preview_id = request.path_params["preview_id"]
             try:
-                if static_service is not None:
-                    service = static_service
-                else:
-                    assert registry is not None
-                    service = await registry.service_for_preview(preview_id)
+                async with resolve_service(preview_id) as service:
+                    return await process_approval(request, service)
             except TossInvestError as exc:
                 return HTMLResponse(
                     _approval_error_page(str(exc)),
                     status_code=404,
                     headers=_approval_headers(),
                 )
+
+        async def process_approval(request: Request, service: TossInvestService) -> Response:
+            preview_id = request.path_params["preview_id"]
             client_key = request.client.host if request.client is not None else "unknown"
             if not await global_approval_attempts.allow(
                 "global"

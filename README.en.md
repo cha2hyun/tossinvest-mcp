@@ -146,6 +146,15 @@ health and approval routes and add firewall, VPN, or gateway authentication.
 
 ## Verification
 
+The current source uses FastMCP 4.0.3 and MCP Python SDK 2. Tests cover both legacy handshake
+connections and the `2026-07-28` sessionless protocol. For the latter, use `/healthz` or list tools
+to check connectivity; MCP `ping` is only available on legacy connections.
+
+Active credential contexts are protected from cache eviction. When every context is busy, a new
+credential set receives `tenant-capacity-exceeded` and can try again after an active request finishes.
+Server errors, transport failures, and missing order IDs after order dispatch return
+`order-state-unknown`. Inspect order history before taking further action; do not repeat the write.
+
 ```bash
 uv sync --all-extras
 uv run pytest

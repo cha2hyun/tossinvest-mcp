@@ -13,9 +13,10 @@ authors = [
   { name = "cha2hyun", email = "cha2hyun.dev@gmail.com" },
 ]
 dependencies = [
-  "fastmcp==3.4.7",
+  "anyio>=4.9,<5",
+  "fastmcp==4.0.3",
   "httpx>=0.28.1,<0.29",
-  "pydantic>=2.11,<3",
+  "pydantic>=2.12,<3",
   "pydantic-settings>=2.9,<3",
   "uvicorn[standard]>=0.34,<1",
 ]

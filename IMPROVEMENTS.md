@@ -1,7 +1,25 @@
 # TossInvest MCP 보완 작업 목록
 
 이 문서는 보안 감사와 에이전트 사용성 검토에서 확인한 보완사항을 추적한다.
-아래 항목은 2026-06-19 기준으로 완료했고, 2026-08-25 릴리즈 보강 내용을 반영했다.
+아래 항목은 2026-06-19 기준으로 완료했고, 이후 릴리즈와 소스 보강 내용을 반영했다.
+
+## 2026-09-09 — MCP 업데이트와 안정성 보강
+
+- [x] FastMCP 4.0.3과 MCP Python SDK 2로 업데이트하고 의존성 lock을 갱신한다.
+- [x] MCP annotation을 SDK 2 필드명으로 전환하고 기존·sessionless 연결을 함께 검사한다.
+- [x] 공식 OpenAPI 1.2.15의 REST contract fingerprint와 36 operations가 이전과 같음을
+  확인한 뒤 manifest를 갱신한다.
+- [x] 도구 호출·preview 등록·사용자 컨텍스트 확보를 공통 처리로 묶는다.
+- [x] 사용 중인 사용자 컨텍스트를 캐시 만료·용량 정리에서 보호하고 취소 시 반환한다.
+- [x] 늦게 도착한 만료 토큰 응답이 새 토큰을 삭제하지 않도록 수정한다.
+- [x] 잘못된 OAuth 응답을 거부하고 오류 코드·응답 메타데이터에도 비밀값 제거를 적용한다.
+- [x] 주문 전송 뒤 서버 오류·통신 오류·잘못된 응답은 상태 미확인으로 처리하고 재시도를
+  막는 회귀 테스트를 추가한다.
+- [x] Retry-After 대기 시간을 제한하고 HTTP 날짜 형식을 지원한다.
+- [x] 승인 시도 제한기를 별도 모듈로 옮기고 만료된 승인·접속자 기록을 정리한다.
+
+검증: pytest 114개, Ruff, mypy strict, 문서·Skill·OpenAPI 검사, dependency audit,
+wheel·source build, 기본·거래 Compose 검증과 가짜 API를 사용하는 Docker E2E를 통과했다.
 
 ## P0 — 실행 안전성과 설정 일관성
 
@@ -49,7 +67,7 @@
 - Ruff check 및 format 통과
 - mypy strict 통과
 - 알려진 Python dependency 취약점 없음
-- OpenAPI v1.2.14, 36 operations fingerprint 일치
+- OpenAPI v1.2.15, 36 operations fingerprint 일치
 - 기본 모드 28개 도구와 쓰기 도구 0개 확인
 - 거래 모드 34개 도구와 쓰기 도구 3개 확인
 - 기본·거래 Compose 구성 검증

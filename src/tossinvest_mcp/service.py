@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any, Literal, cast
 
 from tossinvest_mcp.client import TossInvestClientLike
-from tossinvest_mcp.errors import TossInvestError
+from tossinvest_mcp.errors import OrderStateUnknownError, TossInvestError
 from tossinvest_mcp.models import OrderModificationRequest, OrderPreviewRequest
 from tossinvest_mcp.previews import Preview, PreviewStore
 from tossinvest_mcp.settings import Settings
@@ -845,14 +845,17 @@ class TossInvestService:
             )
 
     async def _operation_with_order_detail(self, operation: dict[str, Any]) -> dict[str, Any]:
-        data = self._mapping_data(operation, "order operation")
+        try:
+            data = self._mapping_data(operation, "order operation")
+        except TossInvestError as exc:
+            raise OrderStateUnknownError(
+                "The order response was malformed after dispatch; its state is unknown"
+            ) from exc
         order_id = data.get("orderId")
-        if not order_id:
-            return {
-                "operation": operation,
-                "order": None,
-                "warning": "The operation succeeded but the response did not contain an order ID.",
-            }
+        if not isinstance(order_id, str) or not order_id.strip():
+            raise OrderStateUnknownError(
+                "The order response did not contain a valid order ID; its state is unknown"
+            )
         try:
             detail = await self.get_order(str(order_id))
         except TossInvestError as exc:

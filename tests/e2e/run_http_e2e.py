@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastmcp import Client
@@ -61,12 +61,13 @@ async def check_http_routes() -> None:
     )
 
 
-async def check_mcp_and_upstream() -> None:
+async def check_mcp_and_upstream(mode: Literal["legacy", "2026-07-28"]) -> None:
     async with (
-        Client(transport("e2e-client-alpha", ALPHA_SECRET), timeout=20) as alpha,
-        Client(transport("e2e-client-beta", BETA_SECRET), timeout=20) as beta,
+        Client(transport("e2e-client-alpha", ALPHA_SECRET), timeout=20, mode=mode) as alpha,
+        Client(transport("e2e-client-beta", BETA_SECRET), timeout=20, mode=mode) as beta,
     ):
-        require(await alpha.ping(), "MCP ping failed")
+        if mode == "legacy":
+            require(await alpha.ping(), "MCP ping failed")
         names = {tool.name for tool in await alpha.list_tools()}
         require("get_prices" in names, "get_prices is missing from the MCP catalog")
         require("place_order" not in names, "trading tool was exposed in read-only mode")
@@ -93,8 +94,8 @@ async def check_mcp_and_upstream() -> None:
             raise AssertionError("upstream error unexpectedly succeeded")
 
 
-async def check_missing_credentials() -> None:
-    async with Client(StreamableHttpTransport(MCP_URL), timeout=20) as client:
+async def check_missing_credentials(mode: Literal["legacy", "2026-07-28"]) -> None:
+    async with Client(StreamableHttpTransport(MCP_URL), timeout=20, mode=mode) as client:
         try:
             await client.call_tool("get_prices", {"symbols": "005930"})
         except ToolError as exc:
@@ -108,8 +109,9 @@ async def check_missing_credentials() -> None:
 
 async def main() -> None:
     await check_http_routes()
-    await check_mcp_and_upstream()
-    await check_missing_credentials()
+    for mode in ("legacy", "2026-07-28"):
+        await check_mcp_and_upstream(mode)
+        await check_missing_credentials(mode)
     print("Hermetic Docker E2E passed")
 
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 # Time-varying groups use their most restrictive published limit.
@@ -58,3 +60,39 @@ class RateLimiter:
                     return
                 delay = (1 - bucket.tokens) / bucket.capacity
             await asyncio.sleep(delay)
+
+
+class ApprovalAttemptLimiter:
+    """Reject repeated approval submissions instead of waiting through them."""
+
+    def __init__(
+        self,
+        *,
+        limit: int = 10,
+        window_seconds: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._limit = limit
+        self._window_seconds = window_seconds
+        self._clock = clock
+        self._attempts: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = asyncio.Lock()
+
+    async def allow(self, key: str) -> bool:
+        async with self._lock:
+            now = self._clock()
+            cutoff = now - self._window_seconds
+            expired = [
+                owner
+                for owner, timestamps in self._attempts.items()
+                if not timestamps or timestamps[-1] <= cutoff
+            ]
+            for owner in expired:
+                del self._attempts[owner]
+            attempts = self._attempts[key]
+            while attempts and attempts[0] <= cutoff:
+                attempts.popleft()
+            if len(attempts) >= self._limit:
+                return False
+            attempts.append(now)
+            return True

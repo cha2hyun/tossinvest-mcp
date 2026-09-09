@@ -308,6 +308,15 @@ proxy 운영자가 책임져야 합니다.
 
 ## 개발과 검증
 
+현재 소스는 FastMCP 4.0.3과 MCP Python SDK 2를 사용하며, 기존 handshake 방식과
+`2026-07-28` 프로토콜의 sessionless 연결을 모두 검증합니다. 새 프로토콜에서는 MCP `ping`
+대신 `/healthz` 또는 도구 목록 조회로 연결 상태를 확인하세요.
+
+사용 중인 인증 컨텍스트는 캐시 만료·용량 정리로 닫히지 않습니다. 캐시가 모두 사용 중이면
+새 자격 증명의 요청은 `tenant-capacity-exceeded`로 거부되며, 진행 중인 요청이 끝난 뒤 다시
+시도할 수 있습니다. 주문 전송 뒤 서버 오류, 통신 오류 또는 주문 ID가 없는 응답은
+`order-state-unknown`으로 처리합니다. 이 경우 주문을 반복하지 말고 주문 내역을 확인하세요.
+
 ```bash
 uv sync --all-extras
 uv run pytest

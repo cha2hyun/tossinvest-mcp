@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 import httpx
@@ -84,14 +86,14 @@ class TossInvestClient:
             return False
         return True
 
-    async def _get_access_token(self, *, force_refresh: bool = False) -> str:
+    async def _get_access_token(self) -> str:
         now = self._clock()
-        if not force_refresh and self._token is not None and now < self._token.refresh_at:
+        if self._token is not None and now < self._token.refresh_at:
             return self._token.value
 
         async with self._token_lock:
             now = self._clock()
-            if not force_refresh and self._token is not None and now < self._token.refresh_at:
+            if self._token is not None and now < self._token.refresh_at:
                 return self._token.value
 
             await self._rate_limiter.acquire("AUTH")
@@ -117,8 +119,19 @@ class TossInvestClient:
             if response.is_error:
                 raise self._error_from_response(response, payload)
             try:
-                token = str(payload["access_token"])
-                expires_in = int(payload["expires_in"])
+                token = payload["access_token"]
+                raw_expiry = payload["expires_in"]
+                if (
+                    not isinstance(token, str)
+                    or not token.strip()
+                    or any(not 33 <= ord(character) <= 126 for character in token)
+                    or isinstance(raw_expiry, bool)
+                    or not isinstance(raw_expiry, (int, str))
+                ):
+                    raise ValueError("Invalid token or expiry type")
+                expires_in = int(raw_expiry)
+                if expires_in <= 0:
+                    raise ValueError("Token expiry must be positive")
             except (KeyError, TypeError, ValueError) as exc:
                 raise TossInvestError(
                     "OAuth response did not contain a valid access token",
@@ -144,7 +157,8 @@ class TossInvestClient:
         account_seq = await self._get_account_seq() if account_required else None
 
         refreshed_after_401 = False
-        max_attempts = 3 if method.upper() == "GET" else 1
+        retryable = method.upper() == "GET" and not write_operation
+        max_attempts = 3 if retryable else 1
         attempt = 0
 
         while attempt < max_attempts:
@@ -164,7 +178,7 @@ class TossInvestClient:
                     json=dict(json) if json is not None else None,
                     headers=headers,
                 )
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except httpx.RequestError as exc:
                 if write_operation:
                     raise OrderStateUnknownError(
                         "The order request connection failed after dispatch; its state is unknown"
@@ -174,27 +188,46 @@ class TossInvestClient:
                     code="upstream-network-error",
                 ) from exc
 
-            payload = self._json_payload(response)
+            if write_operation and response.is_server_error:
+                raise OrderStateUnknownError(
+                    "The order endpoint returned a server error after dispatch; "
+                    "its state is unknown"
+                )
+
+            try:
+                payload = self._json_payload(response)
+            except TossInvestError as exc:
+                if write_operation:
+                    raise OrderStateUnknownError(
+                        "The order response was malformed after dispatch; its state is unknown"
+                    ) from exc
+                raise
             error_code = self._extract_error(payload).get("code")
 
             if response.status_code == 401 and error_code == "expired-token":
-                if write_operation:
-                    raise self._error_from_response(response, payload)
-                if refreshed_after_401 or attempt >= max_attempts:
-                    raise self._error_from_response(response, payload)
-                self._token = None
+                if self._token is not None and self._token.value == token:
+                    self._token = None
+                if not retryable or refreshed_after_401 or attempt >= max_attempts:
+                    raise self._error_from_response(response, payload, request_token=token)
                 refreshed_after_401 = True
                 continue
 
-            if response.status_code == 429 and method.upper() == "GET" and attempt < max_attempts:
+            if response.status_code == 429 and retryable and attempt < max_attempts:
                 retry_after = self._retry_after(response, attempt)
                 await self._sleep(retry_after)
                 continue
 
             if response.is_error:
-                raise self._error_from_response(response, payload)
+                raise self._error_from_response(response, payload, request_token=token)
 
-            return self._normalize_response(response, payload)
+            if not response.is_success:
+                if write_operation:
+                    raise OrderStateUnknownError(
+                        "The order endpoint returned an unexpected response; its state is unknown"
+                    )
+                raise self._error_from_response(response, payload, request_token=token)
+
+            return self._normalize_response(response, payload, request_token=token)
 
         raise TossInvestError("The Toss Securities API request exhausted its retry budget")
 
@@ -272,8 +305,16 @@ class TossInvestClient:
         try:
             payload = response.json()
         except ValueError:
-            return {"raw": response.text}
-        return payload if isinstance(payload, dict) else {"result": payload}
+            payload = None
+        if isinstance(payload, dict):
+            return payload
+        if response.is_error:
+            return {}
+        raise TossInvestError(
+            "The Toss Securities API response was not a JSON object",
+            status_code=response.status_code,
+            code="invalid-upstream-response",
+        )
 
     @staticmethod
     def _extract_error(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -281,10 +322,14 @@ class TossInvestClient:
         return dict(error) if isinstance(error, Mapping) else {}
 
     def _error_from_response(
-        self, response: httpx.Response, payload: Mapping[str, Any]
+        self,
+        response: httpx.Response,
+        payload: Mapping[str, Any],
+        *,
+        request_token: str = "",
     ) -> TossInvestError:
         error = self._extract_error(payload)
-        secrets = self._sensitive_values()
+        secrets = (*self._sensitive_values(), request_token)
         request_id = (
             str(error.get("requestId"))
             if error.get("requestId")
@@ -296,8 +341,8 @@ class TossInvestClient:
         return TossInvestError(
             str(redact_sensitive_values(str(message), secrets)),
             status_code=response.status_code,
-            code=str(error.get("code") or "upstream-error"),
-            request_id=request_id,
+            code=str(redact_sensitive_values(str(error.get("code") or "upstream-error"), secrets)),
+            request_id=redact_sensitive_values(request_id, secrets),
             data=redact_sensitive_values(error.get("data"), secrets),
         )
 
@@ -321,9 +366,17 @@ class TossInvestClient:
         raw = response.headers.get("Retry-After")
         if raw is not None:
             try:
-                return max(0.0, float(raw))
+                delay = float(raw)
             except ValueError:
-                pass
+                try:
+                    retry_at = parsedate_to_datetime(raw)
+                    if retry_at.tzinfo is None:
+                        retry_at = retry_at.replace(tzinfo=UTC)
+                    delay = (retry_at - datetime.now(UTC)).total_seconds()
+                except (TypeError, ValueError, OverflowError):
+                    delay = math.nan
+            if math.isfinite(delay):
+                return min(60.0, max(0.0, delay))
         return float(
             min(4.0, (2 ** (attempt - 1)) + random.uniform(0.0, 0.25))  # noqa: S311
         )
@@ -332,13 +385,11 @@ class TossInvestClient:
         self,
         response: httpx.Response,
         payload: Mapping[str, Any],
+        *,
+        request_token: str = "",
     ) -> dict[str, Any]:
-        return {
-            "data": redact_sensitive_values(
-                payload.get("result", payload),
-                self._credential_values(),
-                redact_accounts=False,
-            ),
+        normalized = {
+            "data": payload.get("result", payload),
             "meta": {
                 "request_id": response.headers.get("X-Request-Id")
                 or response.headers.get("cf-ray"),
@@ -350,3 +401,10 @@ class TossInvestClient:
                 },
             },
         }
+        return dict(
+            redact_sensitive_values(
+                normalized,
+                (*self._credential_values(), request_token),
+                redact_accounts=False,
+            )
+        )

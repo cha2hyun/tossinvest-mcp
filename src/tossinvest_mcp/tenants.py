@@ -6,14 +6,18 @@ import hmac
 import secrets
 import time
 from collections import OrderedDict
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 
+from anyio import CancelScope
 from fastmcp.server.dependencies import get_http_headers
 from pydantic import ValidationError
 
 from tossinvest_mcp.client import TossInvestClient
 from tossinvest_mcp.errors import TossInvestError
+from tossinvest_mcp.previews import Preview
 from tossinvest_mcp.service import TossInvestService
 from tossinvest_mcp.settings import Settings
 
@@ -32,20 +36,24 @@ TENANT_HEADER_NAMES = {
 class _TenantEntry:
     service: TossInvestService
     last_used: float
+    active_requests: int = 0
 
 
 class TenantServiceRegistry:
     """Cache isolated Toss clients and preview state by request credential fingerprint."""
 
-    def __init__(self, runtime: Settings) -> None:
+    def __init__(self, runtime: Settings, *, clock: Callable[[], float] = time.monotonic) -> None:
         self.runtime = runtime
+        self._clock = clock
         self._entries: OrderedDict[str, _TenantEntry] = OrderedDict()
-        self._preview_owners: dict[str, str] = {}
+        self._preview_owners: dict[str, tuple[str, Preview]] = {}
         self._service_keys: dict[int, str] = {}
         self._fingerprint_key = secrets.token_bytes(32)
         self._lock = asyncio.Lock()
+        self._closed = False
 
-    async def current_service(self) -> TossInvestService:
+    @asynccontextmanager
+    async def current_service(self) -> AsyncIterator[TossInvestService]:
         headers = get_http_headers(include=TENANT_HEADER_NAMES)
         try:
             tenant_settings = Settings.from_request_headers(self.runtime, headers)
@@ -75,35 +83,46 @@ class TenantServiceRegistry:
 
         key = self._fingerprint(tenant_settings)
         async with self._lock:
+            self._ensure_open()
             await self._purge_locked()
             entry = self._entries.pop(key, None)
             if entry is None:
+                await self._make_room_locked()
                 client = TossInvestClient(tenant_settings)
                 entry = _TenantEntry(
                     service=TossInvestService(tenant_settings, client),
-                    last_used=time.monotonic(),
+                    last_used=self._clock(),
                 )
                 self._service_keys[id(entry.service)] = key
             else:
-                entry.last_used = time.monotonic()
+                entry.last_used = self._clock()
+            entry.active_requests += 1
             self._entries[key] = entry
-            await self._enforce_capacity_locked()
-            return entry.service
+        try:
+            yield entry.service
+        finally:
+            with CancelScope(shield=True):
+                await self._release(key, entry)
 
     async def register_preview(
         self,
         preview_id: str,
         service: TossInvestService,
     ) -> None:
+        preview = await service.previews.get(preview_id)
         async with self._lock:
+            self._purge_preview_owners_locked()
             key = self._service_keys.get(id(service))
             if key is not None and key in self._entries:
-                self._preview_owners[preview_id] = key
+                self._preview_owners[preview_id] = (key, preview)
 
-    async def service_for_preview(self, preview_id: str) -> TossInvestService:
+    @asynccontextmanager
+    async def service_for_preview(self, preview_id: str) -> AsyncIterator[TossInvestService]:
         async with self._lock:
+            self._ensure_open()
             await self._purge_locked()
-            key = self._preview_owners.get(preview_id)
+            owner = self._preview_owners.get(preview_id)
+            key = owner[0] if owner is not None else None
             entry = self._entries.get(key) if key is not None else None
             if entry is None:
                 raise TossInvestError(
@@ -111,31 +130,71 @@ class TenantServiceRegistry:
                     code="preview-not-found",
                 )
             assert key is not None
-            entry.last_used = time.monotonic()
+            entry.last_used = self._clock()
+            entry.active_requests += 1
             self._entries.move_to_end(key)
-            return entry.service
+        try:
+            yield entry.service
+        finally:
+            with CancelScope(shield=True):
+                await self._release(key, entry)
 
     async def close(self) -> None:
         async with self._lock:
-            entries = list(self._entries.values())
-            self._entries.clear()
+            self._closed = True
+            idle_keys = [key for key, entry in self._entries.items() if not entry.active_requests]
+            entries = [self._entries.pop(key) for key in idle_keys]
+            for entry in entries:
+                self._service_keys.pop(id(entry.service), None)
             self._preview_owners.clear()
-            self._service_keys.clear()
         await asyncio.gather(
             *(entry.service.client.aclose() for entry in entries),
             return_exceptions=True,
         )
 
     async def _purge_locked(self) -> None:
-        cutoff = time.monotonic() - self.runtime.mcp_tenant_cache_ttl
-        expired = [key for key, entry in self._entries.items() if entry.last_used <= cutoff]
+        self._purge_preview_owners_locked()
+        cutoff = self._clock() - self.runtime.mcp_tenant_cache_ttl
+        expired = [
+            key
+            for key, entry in self._entries.items()
+            if not entry.active_requests and entry.last_used <= cutoff
+        ]
         for key in expired:
             await self._remove_locked(key)
 
-    async def _enforce_capacity_locked(self) -> None:
-        while len(self._entries) > self.runtime.mcp_tenant_cache_size:
-            key = next(iter(self._entries))
-            await self._remove_locked(key)
+    async def _make_room_locked(self) -> None:
+        if len(self._entries) < self.runtime.mcp_tenant_cache_size:
+            return
+        for key, entry in self._entries.items():
+            if not entry.active_requests:
+                await self._remove_locked(key)
+                return
+        raise TossInvestError(
+            "All credential contexts are busy; try again after an active request finishes",
+            status_code=503,
+            code="tenant-capacity-exceeded",
+        )
+
+    async def _release(self, key: str, entry: _TenantEntry) -> None:
+        async with self._lock:
+            entry.active_requests -= 1
+            entry.last_used = self._clock()
+            self._entries.move_to_end(key)
+            if self._closed and not entry.active_requests:
+                await self._remove_locked(key)
+
+    def _purge_preview_owners_locked(self) -> None:
+        now = self._clock()
+        self._preview_owners = {
+            preview_id: owner
+            for preview_id, owner in self._preview_owners.items()
+            if owner[1].expires_at > now and not owner[1].consumed
+        }
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise TossInvestError("The server is shutting down", code="server-shutting-down")
 
     async def _remove_locked(self, key: str) -> None:
         entry = self._entries.pop(key, None)
@@ -143,7 +202,9 @@ class TenantServiceRegistry:
             return
         self._service_keys.pop(id(entry.service), None)
         self._preview_owners = {
-            preview_id: owner for preview_id, owner in self._preview_owners.items() if owner != key
+            preview_id: owner
+            for preview_id, owner in self._preview_owners.items()
+            if owner[0] != key
         }
         await entry.service.client.aclose()
 

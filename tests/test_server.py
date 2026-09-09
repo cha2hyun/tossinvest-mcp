@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
@@ -165,9 +165,9 @@ async def test_trading_server_registers_preview_and_execution_tools(
     for name in READ_TOOL_NAMES:
         annotations = tools[name].annotations
         assert annotations is not None
-        assert annotations.readOnlyHint is True
-        assert annotations.idempotentHint is True
-        assert annotations.openWorldHint is True
+        assert annotations.read_only_hint is True
+        assert annotations.idempotent_hint is True
+        assert annotations.open_world_hint is True
         assert tools[name].output_schema is not None
 
     for name in (
@@ -177,16 +177,16 @@ async def test_trading_server_registers_preview_and_execution_tools(
     ):
         annotations = tools[name].annotations
         assert annotations is not None
-        assert annotations.readOnlyHint is False
-        assert annotations.destructiveHint is False
-        assert annotations.idempotentHint is False
+        assert annotations.read_only_hint is False
+        assert annotations.destructive_hint is False
+        assert annotations.idempotent_hint is False
 
     for name in ("place_order", "modify_order", "cancel_order"):
         annotations = tools[name].annotations
         assert annotations is not None
-        assert annotations.readOnlyHint is False
-        assert annotations.destructiveHint is True
-        assert annotations.idempotentHint is False
+        assert annotations.read_only_hint is False
+        assert annotations.destructive_hint is True
+        assert annotations.idempotent_hint is False
 
     preview_properties = tools["preview_order"].parameters["properties"]
     assert "whole-share quantity" in preview_properties["quantity"]["anyOf"][0]["description"]
@@ -317,17 +317,17 @@ async def test_request_scoped_trading_uses_tenant_approval_hash(
 
     mcp, registry = create_mcp(runtime)
     assert isinstance(registry, TenantServiceRegistry)
-    service = await registry.current_service()
-    preview = await service.preview_order(
-        OrderPreviewRequest(
-            symbol="005930",
-            side="BUY",
-            order_type="LIMIT",
-            quantity="1",
-            price="70000",
+    async with registry.current_service() as service:
+        preview = await service.preview_order(
+            OrderPreviewRequest(
+                symbol="005930",
+                side="BUY",
+                order_type="LIMIT",
+                quantity="1",
+                price="70000",
+            )
         )
-    )
-    await registry.register_preview(preview["preview_id"], service)
+        await registry.register_preview(preview["preview_id"], service)
     app = mcp.http_app(path="/mcp", stateless_http=True)
     transport = httpx.ASGITransport(app=app)
 
@@ -393,11 +393,15 @@ async def test_date_and_datetime_inputs_use_openapi_formats(settings: Settings) 
 
 
 @pytest.mark.asyncio
-async def test_mcp_initialize_list_and_tool_call(settings: Settings) -> None:
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_mcp_initialize_list_and_tool_call(
+    settings: Settings, mode: Literal["legacy", "2026-07-28"]
+) -> None:
     mcp, _ = create_mcp(settings, client=StubClient())
 
-    async with Client(mcp) as client:
-        assert await client.ping() is True
+    async with Client(mcp, mode=mode) as client:
+        if mode == "legacy":
+            assert await client.ping() is True
         names = {tool.name for tool in await client.list_tools()}
         assert "get_prices" in names
         result = await client.call_tool("get_prices", {"symbols": "005930"})

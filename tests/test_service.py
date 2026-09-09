@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from tossinvest_mcp.errors import TossInvestError
+from tossinvest_mcp.errors import OrderStateUnknownError, TossInvestError
 from tossinvest_mcp.models import OrderModificationRequest, OrderPreviewRequest
 from tossinvest_mcp.service import TossInvestService
 from tossinvest_mcp.settings import Settings
@@ -121,6 +122,16 @@ class FailingLookupClient(StubClient):
         if path == "/api/v1/orders/order-1":
             raise TossInvestError("lookup failed", code="upstream-network-error")
         return await super().request(method, path, **kwargs)
+
+
+class MalformedOperationClient(StubClient):
+    def __init__(self, result: Any) -> None:
+        super().__init__()
+        self.result = result
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        response = await super().request(method, path, **kwargs)
+        return {"data": self.result, "meta": {}} if method == "POST" else response
 
 
 class DroppingBuyingPowerClient(StubClient):
@@ -338,6 +349,62 @@ async def test_successful_write_is_not_repeated_when_followup_lookup_fails(
     assert result["operation"]["data"]["orderId"] == "order-1"
     assert result["order"] is None
     assert "Do not repeat" in result["warning"]
+    assert sum(call["method"] == "POST" for call in client.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["create", "modify", "cancel"])
+@pytest.mark.parametrize("data", [None, [], {}, {"orderId": 42}, {"orderId": " "}])
+async def test_unverifiable_write_response_consumes_preview_and_reports_unknown_state(
+    trading_settings: Settings, kind: str, data: Any
+) -> None:
+    client = MalformedOperationClient(data)
+    service = TossInvestService(trading_settings, client)
+    if kind == "create":
+        preview = await service.preview_order(
+            OrderPreviewRequest(
+                symbol="005930", side="BUY", order_type="LIMIT", quantity="1", price="70000"
+            )
+        )
+        execute = service.place_order
+    elif kind == "modify":
+        preview = await service.preview_order_modification(
+            OrderModificationRequest(
+                order_id="order-1", order_type="LIMIT", quantity="1", price="70000"
+            )
+        )
+        execute = service.modify_order
+    else:
+        preview = await service.preview_order_cancellation("order-1")
+        execute = service.cancel_order
+    await service.approve_preview(preview["preview_id"])
+
+    with pytest.raises(OrderStateUnknownError) as exc_info:
+        await execute(preview["preview_id"])
+    assert exc_info.value.data["retry"] is False
+    with pytest.raises(TossInvestError, match=r"does not exist|already used"):
+        await execute(preview["preview_id"])
+    assert sum(call["method"] == "POST" for call in client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_execution_submits_an_approved_order_once(
+    trading_settings: Settings,
+) -> None:
+    client = StubClient()
+    service = TossInvestService(trading_settings, client)
+    preview = await service.preview_order(
+        OrderPreviewRequest(
+            symbol="005930", side="BUY", order_type="LIMIT", quantity="1", price="70000"
+        )
+    )
+    await service.approve_preview(preview["preview_id"])
+    results = await asyncio.gather(
+        service.place_order(preview["preview_id"]),
+        service.place_order(preview["preview_id"]),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, TossInvestError) for result in results) == 1
     assert sum(call["method"] == "POST" for call in client.calls) == 1
 
 

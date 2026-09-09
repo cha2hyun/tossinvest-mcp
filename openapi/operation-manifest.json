@@ -1,6 +1,6 @@
 {
-  "version": "1.2.14",
-  "schema_sha256": "331af51f2cd7c52d6a35ef3924255184f84fee398015e6ef450a02c991aec663",
+  "version": "1.2.15",
+  "schema_sha256": "9e9334d7651c8db41670e0949b0290fbeecbbc6c66468bb59ceb88d7f68ae3ca",
   "contract_sha256": "8f2afde2afaa7b4a0423d48139d3b72f56b2c6a259913d066e1df4606971fd76",
   "operations": [
     "DELETE /api/v1/conditional-orders/{conditionalOrderId}",
