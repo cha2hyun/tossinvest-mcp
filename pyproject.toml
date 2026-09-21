@@ -18,7 +18,7 @@ dependencies = [
   "httpx>=0.28.1,<0.29",
   "pydantic>=2.12,<3",
   "pydantic-settings>=2.9,<3",
-  "uvicorn[standard]>=0.52.4,<1",
+  "uvicorn[standard]>=0.53.0,<1",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +29,7 @@ dev = [
   "pytest-asyncio>=1,<2",
   "pyyaml>=6,<7",
   "respx>=0.22,<1",
-  "ruff>=0.11,<1",
+  "ruff>=0.16.7,<1",
 ]
 
 [project.scripts]
