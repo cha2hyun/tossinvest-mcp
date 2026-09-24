@@ -3,6 +3,14 @@
 이 문서는 보안 감사와 에이전트 사용성 검토에서 확인한 보완사항을 추적한다.
 아래 항목은 2026-06-19 기준으로 완료했고, 이후 릴리즈와 소스 보강 내용을 반영했다.
 
+## 2026-09-24 — OpenAPI와 패키지 업데이트
+
+- [x] Toss OpenAPI manifest를 v1.2.17로 갱신하고 36개 operation과 기존 REST contract
+  fingerprint가 유지됨을 확인했다.
+- [x] FastMCP 4.0.8, Uvicorn 0.53.0, Ruff 0.16.8과 지원 범위 내 최신 의존성으로 `uv.lock`을 갱신했다.
+- [x] uv 0.12.18, setup-uv 10.2.0, QEMU 4.4.0, Buildx 4.4.1과 build-push 7.4.0으로
+  실행 환경과 SHA 고정 GitHub Actions를 갱신했다.
+
 ## 2026-09-09 — MCP 업데이트와 안정성 보강
 
 - [x] FastMCP 4.0.3과 MCP Python SDK 2로 업데이트하고 의존성 lock을 갱신한다.
@@ -67,7 +75,7 @@ wheel·source build, 기본·거래 Compose 검증과 가짜 API를 사용하는
 - Ruff check 및 format 통과
 - mypy strict 통과
 - 알려진 Python dependency 취약점 없음
-- OpenAPI v1.2.15, 36 operations fingerprint 일치
+- OpenAPI v1.2.17, 36 operations fingerprint 일치
 - 기본 모드 28개 도구와 쓰기 도구 0개 확인
 - 거래 모드 34개 도구와 쓰기 도구 3개 확인
 - 기본·거래 Compose 구성 검증
