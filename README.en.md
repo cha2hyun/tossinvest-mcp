@@ -146,7 +146,7 @@ health and approval routes and add firewall, VPN, or gateway authentication.
 
 ## Verification
 
-The current source uses FastMCP 4.0.3 and MCP Python SDK 2. Tests cover both legacy handshake
+The current source uses FastMCP 4.0.10 and MCP Python SDK 2. Tests cover both legacy handshake
 connections and the `2026-07-28` sessionless protocol. For the latter, use `/healthz` or list tools
 to check connectivity; MCP `ping` is only available on legacy connections.
 
