@@ -17,7 +17,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-          version: "0.12.19"
+          version: "0.12.22"
       - run: uv sync --frozen --all-extras
       - name: Compare with the official Toss OpenAPI schema
         run: uv run python scripts/update_openapi.py --check

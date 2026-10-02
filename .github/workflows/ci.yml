@@ -17,7 +17,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-          version: "0.12.19"
+          version: "0.12.22"
       - run: uv sync --frozen --all-extras
       - run: uv run ruff check .
       - run: uv run ruff format --check .

@@ -18,7 +18,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-          version: "0.12.19"
+          version: "0.12.22"
       - run: uv sync --frozen --all-extras
       - name: Verify tag matches the package version
         run: uv version --short | grep --fixed-strings --line-regexp "${GITHUB_REF_NAME#v}"

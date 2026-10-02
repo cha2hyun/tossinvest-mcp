@@ -3,6 +3,16 @@
 이 문서는 보안 감사와 에이전트 사용성 검토에서 확인한 보완사항을 추적한다.
 아래 항목은 2026-06-19 기준으로 완료했고, 이후 릴리즈와 소스 보강 내용을 반영했다.
 
+## 2026-10-02 — 의존성과 실행 도구 업데이트
+
+- [x] mypy 2.4.0, Ruff 0.16.10과 지원 범위 내 최신 하위 의존성으로 `uv.lock`을 갱신했다.
+- [x] uv 0.12.22로 Docker와 CI 실행 환경을 갱신했다.
+- [x] FastMCP 4.0.10과 SHA 고정 GitHub Actions가 최신 안정 버전임을 확인했다.
+- [x] Toss OpenAPI v1.2.19의 36개 operation과 REST contract fingerprint가 유지됨을 확인했다.
+
+검증: pytest 114개, Ruff, mypy strict, 문서·Skill·OpenAPI 검사, dependency audit,
+wheel·source build, 기본·거래 Compose 구성 검사와 Python 3.12.15 기반 Docker E2E를 통과했다.
+
 ## 2026-09-28 — OpenAPI와 패키지 업데이트
 
 - [x] Toss OpenAPI manifest를 v1.2.19로 갱신하고 36개 operation과 기존 REST contract
