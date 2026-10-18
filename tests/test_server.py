@@ -25,7 +25,7 @@ from tossinvest_mcp.settings import Settings
 from tossinvest_mcp.tenants import TenantServiceRegistry
 
 from .conftest import APPROVAL_TOKEN
-from .test_service import StubClient
+from .test_service import RecordingClient, StubClient
 
 READ_TOOL_NAMES = {
     "get_stock_info",
@@ -47,6 +47,11 @@ READ_TOOL_NAMES = {
     "get_market_indicator_prices",
     "get_market_indicator_candles",
     "get_market_indicator_investor_trading",
+    "list_sectors",
+    "get_sector",
+    "get_sector_stocks",
+    "get_sector_etfs",
+    "get_sector_rankings",
     "list_accounts",
     "get_holdings",
     "list_orders",
@@ -132,6 +137,82 @@ async def test_empty_runtime_starts_public_tool_catalog_without_credentials(
 
 
 @pytest.mark.asyncio
+async def test_sector_tool_schemas_publish_official_constraints(settings: Settings) -> None:
+    mcp, _ = create_mcp(settings, client=StubClient())
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+
+    assert tools["list_sectors"].parameters["properties"] == {}
+    for name in ("get_sector", "get_sector_stocks", "get_sector_etfs"):
+        parameters = tools[name].parameters
+        assert set(parameters["required"]) == {"sector_id", "market_country"}
+        assert parameters["properties"]["sector_id"]["pattern"] == r"^[A-Za-z0-9_-]{1,40}$"
+        assert parameters["properties"]["market_country"]["enum"] == ["KR", "US"]
+
+    parameters = tools["get_sector_rankings"].parameters
+    assert set(parameters["properties"]) == {"ranking_type", "market_country", "duration"}
+    assert set(parameters["required"]) == {"ranking_type", "market_country", "duration"}
+    assert parameters["properties"]["ranking_type"]["enum"] == [
+        "TOP_GAINERS",
+        "MARKET_TRADING_AMOUNT",
+    ]
+    assert parameters["properties"]["duration"]["enum"] == ["1d", "1w", "1mo", "3mo", "6mo", "1y"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["get_sector", "get_sector_stocks", "get_sector_etfs"])
+@pytest.mark.parametrize("sector_id", ["../accounts", "100/stocks", "100#", "", "a" * 41])
+async def test_sector_tools_reject_unsafe_ids_before_request(
+    settings: Settings, tool_name: str, sector_id: str
+) -> None:
+    upstream = RecordingClient()
+    mcp, _ = create_mcp(settings, client=upstream)
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="sector_id"):
+            await client.call_tool(tool_name, {"sector_id": sector_id, "market_country": "KR"})
+
+    assert upstream.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "invalid_parameter"),
+    [
+        ("get_sector", {"sector_id": "100", "market_country": "JP"}, "market_country"),
+        ("get_sector_stocks", {"sector_id": "100", "market_country": "JP"}, "market_country"),
+        ("get_sector_etfs", {"sector_id": "100", "market_country": "JP"}, "market_country"),
+        ("get_sector", {"sector_id": "100"}, "market_country"),
+        (
+            "get_sector_rankings",
+            {"ranking_type": "TOP_GAINERS", "market_country": "KR", "duration": "realtime"},
+            "duration",
+        ),
+        (
+            "get_sector_rankings",
+            {"ranking_type": "TOP_LOSERS", "market_country": "KR", "duration": "1d"},
+            "ranking_type",
+        ),
+        (
+            "get_sector_rankings",
+            {"ranking_type": "TOP_GAINERS", "market_country": "JP", "duration": "1d"},
+            "market_country",
+        ),
+    ],
+)
+async def test_sector_tools_reject_unsupported_options_before_request(
+    settings: Settings, tool_name: str, arguments: dict[str, str], invalid_parameter: str
+) -> None:
+    upstream = RecordingClient()
+    mcp, _ = create_mcp(settings, client=upstream)
+
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match=invalid_parameter):
+            await client.call_tool(tool_name, arguments)
+
+    assert upstream.calls == []
+
+
+@pytest.mark.asyncio
 async def test_create_mcp_uses_request_credentials_unless_client_is_explicit(
     settings: Settings,
 ) -> None:
@@ -166,6 +247,7 @@ async def test_trading_server_registers_preview_and_execution_tools(
         annotations = tools[name].annotations
         assert annotations is not None
         assert annotations.read_only_hint is True
+        assert annotations.destructive_hint is False
         assert annotations.idempotent_hint is True
         assert annotations.open_world_hint is True
         assert tools[name].output_schema is not None

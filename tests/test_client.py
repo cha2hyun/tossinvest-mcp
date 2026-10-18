@@ -317,8 +317,10 @@ async def test_write_network_failure_is_reported_as_unknown(
 
 
 @pytest.mark.asyncio
-async def test_write_is_not_retried_when_token_is_reported_expired(
+@pytest.mark.parametrize("error_code", ["expired-token", "token-revoked"])
+async def test_write_is_not_retried_when_token_is_no_longer_valid(
     settings: Settings,
+    error_code: str,
 ) -> None:
     token_calls = 0
     order_calls = 0
@@ -334,7 +336,7 @@ async def test_write_is_not_retried_when_token_is_reported_expired(
         order_calls += 1
         return httpx.Response(
             401,
-            json={"error": {"code": "expired-token", "message": "expired"}},
+            json={"error": {"code": error_code, "message": "token is no longer valid"}},
         )
 
     http = make_http_client(handler)
@@ -350,14 +352,18 @@ async def test_write_is_not_retried_when_token_is_reported_expired(
             write_operation=True,
         )
 
-    assert exc_info.value.code == "expired-token"
+    assert exc_info.value.code == error_code
     assert token_calls == 1
     assert order_calls == 1
     await http.aclose()
 
 
 @pytest.mark.asyncio
-async def test_read_refreshes_an_expired_token_once(settings: Settings) -> None:
+@pytest.mark.parametrize("error_code", ["expired-token", "token-revoked"])
+async def test_read_refreshes_a_token_that_is_no_longer_valid_once(
+    settings: Settings,
+    error_code: str,
+) -> None:
     token_calls = 0
     price_calls = 0
 
@@ -377,7 +383,7 @@ async def test_read_refreshes_an_expired_token_once(settings: Settings) -> None:
         if price_calls == 1:
             return httpx.Response(
                 401,
-                json={"error": {"code": "expired-token", "message": "expired"}},
+                json={"error": {"code": error_code, "message": "token is no longer valid"}},
             )
         assert request.headers["Authorization"] == "Bearer access-token-2"
         return httpx.Response(200, json={"result": [{"symbol": "005930"}]})
@@ -392,7 +398,67 @@ async def test_read_refreshes_an_expired_token_once(settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_late_401_does_not_discard_a_newer_token(settings: Settings) -> None:
+@pytest.mark.parametrize("error_code", [[], {}])
+async def test_malformed_401_error_code_is_normalized_without_refresh(
+    settings: Settings, error_code: Any
+) -> None:
+    token_calls = 0
+    price_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, price_calls
+        if request.url.path == "/oauth2/token":
+            token_calls += 1
+            return httpx.Response(200, json={"access_token": "token", "expires_in": 3600})
+        price_calls += 1
+        return httpx.Response(401, json={"error": {"code": error_code}})
+
+    async with make_http_client(handler) as http:
+        client = TossInvestClient(settings, http_client=http, rate_limiter=NoopRateLimiter())
+        with pytest.raises(TossInvestError) as exc_info:
+            await client.request("GET", "/api/v1/prices", group="MARKET_DATA")
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.code == "upstream-error"
+    assert token_calls == 1
+    assert price_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["expired-token", "token-revoked"])
+async def test_repeated_token_rejection_stops_after_one_read_refresh(
+    settings: Settings,
+    error_code: str,
+) -> None:
+    token_calls = 0
+    price_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, price_calls
+        if request.url.path == "/oauth2/token":
+            token_calls += 1
+            return httpx.Response(
+                200, json={"access_token": f"access-token-{token_calls}", "expires_in": 3600}
+            )
+        price_calls += 1
+        return httpx.Response(401, json={"error": {"code": error_code}})
+
+    async with make_http_client(handler) as http:
+        client = TossInvestClient(settings, http_client=http, rate_limiter=NoopRateLimiter())
+        with pytest.raises(TossInvestError) as exc_info:
+            await client.request("GET", "/api/v1/prices", group="MARKET_DATA")
+
+    assert exc_info.value.code == error_code
+    assert token_calls == 2
+    assert price_calls == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_code", ["expired-token", "token-revoked"])
+async def test_late_401_does_not_discard_a_newer_token(
+    settings: Settings,
+    error_code: str,
+) -> None:
     token_calls = 0
     expired_requests = 0
     both_dispatched = asyncio.Event()
@@ -414,7 +480,7 @@ async def test_late_401_does_not_discard_a_newer_token(settings: Settings) -> No
                 await refreshed.wait()
             else:
                 await both_dispatched.wait()
-            return httpx.Response(401, json={"error": {"code": "expired-token"}})
+            return httpx.Response(401, json={"error": {"code": error_code}})
         assert request.headers["Authorization"] == "Bearer token-2"
         return httpx.Response(200, json={"result": {"ok": True}})
 

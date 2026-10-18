@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -42,6 +43,9 @@ RankingType = Literal[
     "TOSS_SECURITIES_TRADING_VOLUME",
 ]
 RankingDuration = Literal["realtime", "1d", "1w", "1mo", "3mo", "6mo", "1y"]
+SectorRankingType = Literal["TOP_GAINERS", "MARKET_TRADING_AMOUNT"]
+SectorRankingDuration = Literal["1d", "1w", "1mo", "3mo", "6mo", "1y"]
+SECTOR_ID_PATTERN = r"^[A-Za-z0-9_-]{1,40}$"
 MarketIndicator = Literal[
     "KOSPI",
     "KOSDAQ",
@@ -291,6 +295,46 @@ class TossInvestService:
             f"/api/v1/market-indicators/{symbol}/investor-trading",
             group="MARKET_INDICATOR",
             params={"interval": interval, "count": count, "until": until},
+        )
+
+    async def list_sectors(self) -> dict[str, Any]:
+        return await self.client.request("GET", "/api/v1/sectors", group="SECTOR")
+
+    async def get_sector(self, sector_id: str, market_country: Market) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            f"/api/v1/sectors/{self._validated_sector_id(sector_id)}",
+            group="SECTOR",
+            params={"marketCountry": market_country},
+        )
+
+    async def get_sector_stocks(self, sector_id: str, market_country: Market) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            f"/api/v1/sectors/{self._validated_sector_id(sector_id)}/stocks",
+            group="SECTOR",
+            params={"marketCountry": market_country},
+        )
+
+    async def get_sector_etfs(self, sector_id: str, market_country: Market) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            f"/api/v1/sectors/{self._validated_sector_id(sector_id)}/etfs",
+            group="SECTOR",
+            params={"marketCountry": market_country},
+        )
+
+    async def get_sector_rankings(
+        self,
+        ranking_type: SectorRankingType,
+        market_country: Market,
+        duration: SectorRankingDuration,
+    ) -> dict[str, Any]:
+        return await self.client.request(
+            "GET",
+            "/api/v1/sectors/rankings",
+            group="SECTOR_RANKING",
+            params={"type": ranking_type, "marketCountry": market_country, "duration": duration},
         )
 
     async def list_accounts(self) -> dict[str, Any]:
@@ -923,6 +967,15 @@ class TossInvestService:
                 code=f"order-not-{operation}able",
                 data={"status": status},
             )
+
+    @staticmethod
+    def _validated_sector_id(sector_id: str) -> str:
+        if re.fullmatch(SECTOR_ID_PATTERN, sector_id) is None:
+            raise TossInvestError(
+                "sector_id must contain 1 to 40 letters, digits, underscores, or hyphens",
+                code="invalid-sector-id",
+            )
+        return sector_id
 
     @staticmethod
     def _validated_symbols(symbols: str) -> str:

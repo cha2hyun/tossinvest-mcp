@@ -25,7 +25,7 @@ TENANTS = {
 
 
 class FakeTossHandler(BaseHTTPRequestHandler):
-    """Strict fake for the two upstream operations exercised by the E2E test."""
+    """Strict fake for the upstream operations exercised by the E2E test."""
 
     server_version = "TossInvestE2E/1"
     sys_version = ""
@@ -37,7 +37,7 @@ class FakeTossHandler(BaseHTTPRequestHandler):
         if parsed.path == "/healthz":
             self._send(200, {"status": "ok"})
             return
-        if parsed.path != "/api/v1/prices":
+        if parsed.path != "/api/v1/prices" and not parsed.path.startswith("/api/v1/sectors"):
             self._error(404, "unexpected-path")
             return
 
@@ -47,6 +47,10 @@ class FakeTossHandler(BaseHTTPRequestHandler):
             return
         if not self.headers.get("User-Agent", "").startswith("tossinvest-mcp/"):
             self._error(400, "missing-user-agent")
+            return
+
+        if parsed.path.startswith("/api/v1/sectors"):
+            self._serve_sector(parsed.path, parse_qs(parsed.query, keep_blank_values=True))
             return
 
         symbols = parse_qs(parsed.query).get("symbols")
@@ -82,6 +86,83 @@ class FakeTossHandler(BaseHTTPRequestHandler):
                 "X-RateLimit-Remaining": "19",
             },
         )
+
+    def _serve_sector(self, path: str, query: dict[str, list[str]]) -> None:
+        expected_query: dict[str, list[str]] = {"marketCountry": ["KR"]}
+        result: dict[str, Any]
+        if path == "/api/v1/sectors":
+            expected_query = {}
+            result = {
+                "sectors": [
+                    {"sectorId": "10", "name": "IT 하드웨어", "depth": 0, "parentSectorId": None},
+                    {"sectorId": "100", "name": "반도체", "depth": 1, "parentSectorId": "10"},
+                ]
+            }
+        elif path == "/api/v1/sectors/100":
+            result = {
+                "sectorId": "100",
+                "name": "반도체",
+                "depth": 1,
+                "parentSectorId": "10",
+                "summary": "반도체 설계·제조 전문 회사들",
+                "performance": {
+                    "changeRates": [
+                        {"duration": "1d", "changeRate": "0.0179"},
+                        {"duration": "1w", "changeRate": "0.0412"},
+                        {"duration": "1mo", "changeRate": "-0.0231"},
+                        {"duration": "3mo", "changeRate": "0.1188"},
+                        {"duration": "6mo", "changeRate": None},
+                        {"duration": "1y", "changeRate": "0.3542"},
+                    ]
+                },
+            }
+        elif path == "/api/v1/sectors/100/stocks":
+            expected_query = {"marketCountry": ["US"]}
+            result = {
+                "stocks": [
+                    {
+                        "symbol": "NVDA",
+                        "name": "엔비디아",
+                        "volume": None,
+                        "tradingAmount": None,
+                        "marketCapitalization": "4703000000000000",
+                        "currency": "KRW",
+                    }
+                ]
+            }
+        elif path == "/api/v1/sectors/100/etfs":
+            result = {"etfs": [{"symbol": "091160", "name": "KODEX 반도체"}]}
+        elif path == "/api/v1/sectors/rankings":
+            expected_query = {"type": ["TOP_GAINERS"], "marketCountry": ["KR"], "duration": ["1d"]}
+            ranking = {
+                "rank": 1,
+                "sectorId": "100",
+                "name": "반도체",
+                "changeRate": "0.0179",
+                "tradingAmount": None,
+                "marketCapitalization": None,
+                "currency": "KRW",
+            }
+            if query.get("type") == ["MARKET_TRADING_AMOUNT"]:
+                expected_query = {
+                    "type": ["MARKET_TRADING_AMOUNT"],
+                    "marketCountry": ["US"],
+                    "duration": ["1w"],
+                }
+                ranking.update(
+                    changeRate="0.0412",
+                    tradingAmount="184200000000000",
+                    marketCapitalization="9120000000000000",
+                )
+            result = {"rankings": [ranking]}
+        else:
+            self._error(404, "unexpected-sector-path")
+            return
+
+        if query != expected_query:
+            self._error(400, "unexpected-sector-query")
+            return
+        self._send(200, {"result": result}, headers={"X-Request-Id": "e2e-sector"})
 
     def do_POST(self) -> None:
         if urlsplit(self.path).path != "/oauth2/token":

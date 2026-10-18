@@ -225,6 +225,62 @@ async def test_new_openapi_read_operations_route_to_expected_groups(
 
 
 @pytest.mark.asyncio
+async def test_sector_reads_map_required_parameters_and_rate_groups(settings: Settings) -> None:
+    client = RecordingClient()
+    service = TossInvestService(settings, client)
+
+    await service.list_sectors()
+    await service.get_sector("100", "KR")
+    await service.get_sector_stocks("100", "US")
+    await service.get_sector_etfs("a_B-" * 10, "KR")
+    await service.get_sector_rankings("MARKET_TRADING_AMOUNT", "US", "1w")
+
+    assert client.calls == [
+        {"method": "GET", "path": "/api/v1/sectors", "group": "SECTOR"},
+        {
+            "method": "GET",
+            "path": "/api/v1/sectors/100",
+            "group": "SECTOR",
+            "params": {"marketCountry": "KR"},
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/sectors/100/stocks",
+            "group": "SECTOR",
+            "params": {"marketCountry": "US"},
+        },
+        {
+            "method": "GET",
+            "path": f"/api/v1/sectors/{'a_B-' * 10}/etfs",
+            "group": "SECTOR",
+            "params": {"marketCountry": "KR"},
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/sectors/rankings",
+            "group": "SECTOR_RANKING",
+            "params": {"type": "MARKET_TRADING_AMOUNT", "marketCountry": "US", "duration": "1w"},
+        },
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["get_sector", "get_sector_stocks", "get_sector_etfs"])
+@pytest.mark.parametrize("sector_id", ["../accounts", "100?x=1", "100\n", "", "a" * 41])
+async def test_sector_service_rejects_unsafe_ids_before_request(
+    settings: Settings, method: str, sector_id: str
+) -> None:
+    client = RecordingClient()
+    service = TossInvestService(settings, client)
+
+    with pytest.raises(TossInvestError) as exc_info:
+        await getattr(service, method)(sector_id, "KR")
+
+    assert exc_info.value.code == "invalid-sector-id"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_order_requires_separate_human_approval(
     trading_settings: Settings,
 ) -> None:

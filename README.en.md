@@ -109,13 +109,18 @@ connection headers, outside model-generated tool arguments. Remote URLs must use
 
 ## Tools
 
-Read-only mode exposes 28 tools covering stock metadata and warnings; prices, order books, trades,
+Read-only mode exposes 33 tools covering stock metadata and warnings; prices, order books, trades,
 candles, and limits; investor, program, short-selling, credit, and securities-lending activity;
 exchange rates, market calendars, rankings, and market indicators; accounts, holdings, buying
 power, sellable quantity, and commissions; and regular or conditional order history.
 
+Sector tools cover the hierarchy (`list_sectors`), details and returns (`get_sector`), constituent
+stocks (`get_sector_stocks`), related ETFs (`get_sector_etfs`), and rankings (`get_sector_rankings`).
+Use sector IDs from `list_sectors`. Stock and ranking amounts follow the response `currency` and
+are KRW-converted even for US markets. Returns are decimal ratios; preserve missing values as null.
+
 Trading mode adds six preview and execution tools for creating, modifying, and cancelling regular
-orders, for 34 tools in total. The official API's conditional-order create, modify, and cancel
+orders, for 39 tools in total. The official API's conditional-order create, modify, and cancel
 operations are intentionally not exposed because they do not yet have the same preview, separate
 human approval, and immediate revalidation safeguards.
 
@@ -146,7 +151,7 @@ health and approval routes and add firewall, VPN, or gateway authentication.
 
 ## Verification
 
-The current source uses FastMCP 4.0.10 and MCP Python SDK 2. Tests cover both legacy handshake
+The current source uses FastMCP 4.1.1 and MCP Python SDK 2.3. Tests cover both legacy handshake
 connections and the `2026-07-28` sessionless protocol. For the latter, use `/healthz` or list tools
 to check connectivity; MCP `ping` is only available on legacy connections.
 

@@ -83,6 +83,26 @@
     "kind": "tool",
     "tools": ["get_market_indicator_investor_trading"]
   },
+  "listSectors": {
+    "kind": "tool",
+    "tools": ["list_sectors"]
+  },
+  "getSector": {
+    "kind": "tool",
+    "tools": ["get_sector"]
+  },
+  "getSectorStocks": {
+    "kind": "tool",
+    "tools": ["get_sector_stocks"]
+  },
+  "getSectorEtfs": {
+    "kind": "tool",
+    "tools": ["get_sector_etfs"]
+  },
+  "getSectorRankings": {
+    "kind": "tool",
+    "tools": ["get_sector_rankings"]
+  },
   "getAccounts": {
     "kind": "tool",
     "tools": ["list_accounts"]

@@ -221,15 +221,20 @@ index는 실제 계좌값이 아니며 모델 도구 인자에도 들어가지 �
 
 ## 제공 도구
 
-기본 조회 모드는 다음 28개 도구를 제공합니다.
+기본 조회 모드는 다음 33개 도구를 제공합니다.
 
 | 구분 | 도구 |
 | --- | --- |
 | 종목·시세 | `get_stock_info`, `list_stocks`, `get_stock_warnings`, `get_prices`, `get_orderbook`, `get_recent_trades`, `get_price_limits`, `get_candles` |
 | 종목 동향 | `get_stock_investor_trading`, `get_stock_program_trades`, `get_stock_short_selling`, `get_stock_credit_trades`, `get_stock_securities_lending` |
 | 시장 정보 | `get_exchange_rate`, `get_market_calendar`, `get_rankings`, `get_market_indicator_prices`, `get_market_indicator_candles`, `get_market_indicator_investor_trading` |
+| 섹터 | `list_sectors`, `get_sector`, `get_sector_stocks`, `get_sector_etfs`, `get_sector_rankings` |
 | 계좌·자산 | `list_accounts`, `get_holdings`, `get_buying_power`, `get_sellable_quantity`, `get_commissions` |
 | 주문 조회 | `list_orders`, `get_order`, `list_conditional_orders`, `get_conditional_order` |
+
+섹터 식별자는 `list_sectors`에서 확인합니다. 섹터 구성 주식과 랭킹의 금액은 미국 시장도
+원화 환산값이므로 응답의 `currency`를 따릅니다. 등락률은 소수비율이며, 데이터가 없는
+항목의 `null`은 0과 구분합니다.
 
 공식 OpenAPI의 조건주문 생성·수정·취소는 일반 주문에 적용된 preview, 별도 사람 승인,
 실행 직전 재검증이 아직 구현되지 않아 MCP 도구로 노출하지 않습니다.
@@ -308,7 +313,7 @@ proxy 운영자가 책임져야 합니다.
 
 ## 개발과 검증
 
-현재 소스는 FastMCP 4.0.10과 MCP Python SDK 2를 사용하며, 기존 handshake 방식과
+현재 소스는 FastMCP 4.1.1과 MCP Python SDK 2.3을 사용하며, 기존 handshake 방식과
 `2026-07-28` 프로토콜의 sessionless 연결을 모두 검증합니다. 새 프로토콜에서는 MCP `ping`
 대신 `/healthz` 또는 도구 목록 조회로 연결 상태를 확인하세요.
 

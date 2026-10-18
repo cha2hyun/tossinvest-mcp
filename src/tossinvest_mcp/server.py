@@ -38,9 +38,12 @@ from tossinvest_mcp.models import (
 )
 from tossinvest_mcp.rate_limit import ApprovalAttemptLimiter
 from tossinvest_mcp.service import (
+    SECTOR_ID_PATTERN,
     MarketIndicator,
     RankingDuration,
     RankingType,
+    SectorRankingDuration,
+    SectorRankingType,
     SecurityType,
     StockMarket,
     StockStatus,
@@ -68,6 +71,13 @@ MarketIndicatorSymbols = Annotated[
     Field(
         pattern=r"^[A-Za-z0-9_,]+$",
         description="One or more comma-separated market-indicator symbols.",
+    ),
+]
+SectorId = Annotated[
+    str,
+    Field(
+        pattern=SECTOR_ID_PATTERN,
+        description="Sector ID returned by list_sectors; 1 to 40 letters, digits, _ or -.",
     ),
 ]
 OrderId = Annotated[
@@ -660,6 +670,88 @@ def create_mcp(
             count,
             until.isoformat() if until is not None else None,
         )
+
+    @mcp.tool(
+        tags={"market", "read", "sector"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def list_sectors() -> dict[str, Any]:
+        """Return the complete sector hierarchy and IDs; cache this catalog for a day."""
+        return await service_call("list_sectors")
+
+    @mcp.tool(
+        tags={"market", "read", "sector"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_sector(
+        sector_id: SectorId,
+        market_country: Annotated[
+            Literal["KR", "US"],
+            Field(description="Market used for sector performance."),
+        ],
+    ) -> dict[str, Any]:
+        """Return a sector profile and period change rates for the selected market."""
+        return await service_call("get_sector", sector_id, market_country)
+
+    @mcp.tool(
+        tags={"market", "read", "sector"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_sector_stocks(
+        sector_id: SectorId,
+        market_country: Annotated[
+            Literal["KR", "US"],
+            Field(description="Korean or US stock universe."),
+        ],
+    ) -> dict[str, Any]:
+        """Return all common stocks in a sector and its children, by descending market cap.
+
+        Monetary values are converted to KRW, including US stocks.
+        """
+        return await service_call("get_sector_stocks", sector_id, market_country)
+
+    @mcp.tool(
+        tags={"market", "read", "sector"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_sector_etfs(
+        sector_id: SectorId,
+        market_country: Annotated[
+            Literal["KR", "US"],
+            Field(description="Korean or US ETF listing market."),
+        ],
+    ) -> dict[str, Any]:
+        """Return ETF symbols and names assigned directly to a sector, excluding its children.
+
+        Use get_prices for quotes and get_stock_info for stock reference information.
+        """
+        return await service_call("get_sector_etfs", sector_id, market_country)
+
+    @mcp.tool(
+        tags={"market", "read", "sector", "ranking"},
+        annotations=READ_ANNOTATIONS,
+        output_schema=API_RESPONSE_SCHEMA,
+    )
+    async def get_sector_rankings(
+        ranking_type: Annotated[SectorRankingType, Field(description="Sector ranking metric.")],
+        market_country: Annotated[
+            Literal["KR", "US"],
+            Field(description="Korean or US market universe."),
+        ],
+        duration: Annotated[
+            SectorRankingDuration,
+            Field(description="Ranking aggregation period in trading days."),
+        ],
+    ) -> dict[str, Any]:
+        """Return up to 100 sectors ranked by gains or trading amount, at depths 0 and 1.
+
+        Monetary values are converted to KRW, including the US market.
+        """
+        return await service_call("get_sector_rankings", ranking_type, market_country, duration)
 
     @mcp.tool(
         tags={"account", "read"},

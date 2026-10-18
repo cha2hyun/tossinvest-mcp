@@ -204,7 +204,11 @@ class TossInvestClient:
                 raise
             error_code = self._extract_error(payload).get("code")
 
-            if response.status_code == 401 and error_code == "expired-token":
+            if (
+                response.status_code == 401
+                and isinstance(error_code, str)
+                and error_code in {"expired-token", "token-revoked"}
+            ):
                 if self._token is not None and self._token.value == token:
                     self._token = None
                 if not retryable or refreshed_after_401 or attempt >= max_attempts:

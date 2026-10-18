@@ -1,8 +1,40 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
-from tossinvest_mcp.rate_limit import ApprovalAttemptLimiter
+import tossinvest_mcp.rate_limit as rate_limit_module
+from tossinvest_mcp.rate_limit import ApprovalAttemptLimiter, RateLimiter
+
+
+@pytest.mark.asyncio
+async def test_sector_and_ranking_limits_are_independent_five_request_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 0.0
+    waits: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        nonlocal now
+        waits.append(delay)
+        now += delay
+
+    monkeypatch.setattr(rate_limit_module, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(
+        rate_limit_module,
+        "asyncio",
+        SimpleNamespace(Lock=asyncio.Lock, sleep=sleep),
+    )
+    limiter = RateLimiter()
+    for group in ("SECTOR", "SECTOR_RANKING"):
+        for _ in range(5):
+            await limiter.acquire(group)
+    assert waits == []
+
+    await limiter.acquire("SECTOR")
+    assert waits == pytest.approx([0.2])
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,8 @@ RATE_LIMITS: dict[str, float] = {
     "MARKET_INDICATOR_PRICE": 10,
     "MARKET_INDICATOR": 10,
     "MARKET_INDICATOR_CHART": 5,
+    "SECTOR": 5,
+    "SECTOR_RANKING": 5,
     "ORDER": 10,
     "ORDER_HISTORY": 5,
     "ORDER_INFO": 3,

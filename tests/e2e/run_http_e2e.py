@@ -11,6 +11,13 @@ from fastmcp.exceptions import ToolError
 MCP_URL = "http://127.0.0.1:8000/mcp"
 ALPHA_SECRET = "e2e-secret-alpha-not-real"  # noqa: S105 - test-only fake value
 BETA_SECRET = "e2e-secret-beta-not-real"  # noqa: S105 - test-only fake value
+SECTOR_TOOLS = {
+    "list_sectors",
+    "get_sector",
+    "get_sector_stocks",
+    "get_sector_etfs",
+    "get_sector_rankings",
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -43,6 +50,92 @@ def result_price(structured: dict[str, Any] | None) -> str:
     return value
 
 
+def result_object(structured: dict[str, Any] | None) -> dict[str, Any]:
+    require(structured is not None, "sector tool returned no structured content")
+    assert structured is not None
+    data = structured.get("data")
+    require(isinstance(data, dict), "sector tool returned unexpected data")
+    assert isinstance(data, dict)
+    return data
+
+
+async def check_sector_tools(client: Client[StreamableHttpTransport]) -> None:
+    sectors = await client.call_tool("list_sectors", {})
+    require(
+        result_object(sectors.structured_content)["sectors"]
+        == [
+            {"sectorId": "10", "name": "IT 하드웨어", "depth": 0, "parentSectorId": None},
+            {"sectorId": "100", "name": "반도체", "depth": 1, "parentSectorId": "10"},
+        ],
+        "sector hierarchy or null parent changed",
+    )
+
+    detail = await client.call_tool("get_sector", {"sector_id": "100", "market_country": "KR"})
+    detail_data = result_object(detail.structured_content)
+    require(detail_data["sectorId"] == "100", "sector detail identifier changed")
+    require(
+        detail_data["performance"]["changeRates"]
+        == [
+            {"duration": "1d", "changeRate": "0.0179"},
+            {"duration": "1w", "changeRate": "0.0412"},
+            {"duration": "1mo", "changeRate": "-0.0231"},
+            {"duration": "3mo", "changeRate": "0.1188"},
+            {"duration": "6mo", "changeRate": None},
+            {"duration": "1y", "changeRate": "0.3542"},
+        ],
+        "sector performance periods, decimal strings, or missing values changed",
+    )
+
+    stocks = await client.call_tool(
+        "get_sector_stocks", {"sector_id": "100", "market_country": "US"}
+    )
+    require(
+        result_object(stocks.structured_content)["stocks"]
+        == [
+            {
+                "symbol": "NVDA",
+                "name": "엔비디아",
+                "volume": None,
+                "tradingAmount": None,
+                "marketCapitalization": "4703000000000000",
+                "currency": "KRW",
+            }
+        ],
+        "US sector stock KRW amounts or missing values changed",
+    )
+
+    etfs = await client.call_tool("get_sector_etfs", {"sector_id": "100", "market_country": "KR"})
+    require(
+        result_object(etfs.structured_content)["etfs"]
+        == [{"symbol": "091160", "name": "KODEX 반도체"}],
+        "sector ETF symbol or name changed",
+    )
+
+    for ranking_type, market_country, duration, change_rate, amount, capitalization in (
+        ("TOP_GAINERS", "KR", "1d", "0.0179", None, None),
+        ("MARKET_TRADING_AMOUNT", "US", "1w", "0.0412", "184200000000000", "9120000000000000"),
+    ):
+        rankings = await client.call_tool(
+            "get_sector_rankings",
+            {"ranking_type": ranking_type, "market_country": market_country, "duration": duration},
+        )
+        require(
+            result_object(rankings.structured_content)["rankings"]
+            == [
+                {
+                    "rank": 1,
+                    "sectorId": "100",
+                    "name": "반도체",
+                    "changeRate": change_rate,
+                    "tradingAmount": amount,
+                    "marketCapitalization": capitalization,
+                    "currency": "KRW",
+                }
+            ],
+            f"{ranking_type} sector ranking or KRW currency changed",
+        )
+
+
 async def check_http_routes() -> None:
     async with httpx.AsyncClient(base_url="http://127.0.0.1:8000") as client:
         health = await client.get("/healthz")
@@ -68,9 +161,17 @@ async def check_mcp_and_upstream(mode: Literal["legacy", "2026-07-28"]) -> None:
     ):
         if mode == "legacy":
             require(await alpha.ping(), "MCP ping failed")
-        names = {tool.name for tool in await alpha.list_tools()}
+        tools = await alpha.list_tools()
+        names = {tool.name for tool in tools}
         require("get_prices" in names, "get_prices is missing from the MCP catalog")
         require("place_order" not in names, "trading tool was exposed in read-only mode")
+        require(SECTOR_TOOLS <= names, "sector tools are missing from the MCP catalog")
+        for tool in tools:
+            if tool.name in SECTOR_TOOLS:
+                require(
+                    tool.annotations is not None and tool.annotations.read_only_hint is True,
+                    f"{tool.name} is not marked read-only",
+                )
 
         alpha_first = await alpha.call_tool("get_prices", {"symbols": "005930"})
         beta_result = await beta.call_tool("get_prices", {"symbols": "005930"})
@@ -82,6 +183,7 @@ async def check_mcp_and_upstream(mode: Literal["legacy", "2026-07-28"]) -> None:
             result_price(alpha_second.structured_content) == "71000",
             "alpha tenant changed after beta request",
         )
+        await check_sector_tools(alpha)
 
         try:
             await alpha.call_tool("get_prices", {"symbols": "E2EERROR"})

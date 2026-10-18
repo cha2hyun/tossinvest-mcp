@@ -1,6 +1,6 @@
 ---
 name: tossinvest
-description: Use when reading official Toss Securities market, stock, calendar, exchange-rate, commission, holding, buying-power, sellable-quantity, or order-status data through the TossInvest MCP server. Use tossinvest-trading instead when the user explicitly requests an order create, modification, or cancellation.
+description: Use when reading official Toss Securities market, stock, sector, calendar, exchange-rate, commission, holding, buying-power, sellable-quantity, or order-status data through the TossInvest MCP server. Use tossinvest-trading instead when the user explicitly requests an order create, modification, or cancellation.
 license: MIT
 metadata:
   hermes:
@@ -44,6 +44,9 @@ account and supported Korean or US market data. Hermes may prefix tool names wit
   securities-lending history, and preserve their upstream freshness limitations.
 - Use `get_rankings` for ranked universes and the market-indicator tools for Korean indices,
   government-bond yields, or KRX investor trading amounts.
+- Use `list_sectors` to resolve sector IDs, `get_sector` for descriptions and returns,
+  `get_sector_stocks` for constituent stocks including child sectors, and `get_sector_etfs` for
+  ETFs in that sector only. Use `get_sector_rankings` for gains or trading-amount rankings.
 - Call `get_stock_warnings` before discussing trading restrictions or a possible purchase.
 - Call `get_market_calendar` before reasoning about whether a market session is open.
 - Use `get_holdings`, `get_buying_power`, or `get_sellable_quantity` for account availability.
@@ -54,6 +57,8 @@ account and supported Korean or US market data. Hermes may prefix tool names wit
 ## Report results
 
 - Preserve the response currency, timestamp, and request ID when relevant.
+- Sector stock and ranking amounts are KRW-converted even for US markets; follow `currency`.
+  Sector returns are decimal ratios. Preserve null values as missing rather than treating them as 0.
 - Explain that `list_accounts` intentionally returns redacted metadata.
 - Distinguish order group filters (`OPEN` or `CLOSED`) from each order's detailed status.
 - If `CLOSED` history is unavailable upstream, report that limitation instead of inventing results.

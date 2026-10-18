@@ -3,6 +3,22 @@
 이 문서는 보안 감사와 에이전트 사용성 검토에서 확인한 보완사항을 추적한다.
 아래 항목은 2026-06-19 기준으로 완료했고, 이후 릴리즈와 소스 보강 내용을 반영했다.
 
+## 2026-10-18 — 섹터 API와 MCP 업데이트
+
+- [x] Toss OpenAPI v1.2.24의 41개 operation에 맞춰 섹터 목록·상세·구성 주식·관련 ETF·랭킹
+  조회 도구 5개와 `SECTOR`·`SECTOR_RANKING` rate limit을 추가했다.
+- [x] 섹터 ID와 시장·기간·랭킹 종류를 검증하고, 두 MCP 프로토콜의 HTTP E2E에서
+  계층·통화·소수 문자열·null 보존을 확인했다.
+- [x] FastMCP 4.1.1, MCP Python SDK 2.3.0, Pydantic 2.14.1, Ruff 0.17.1과 지원 범위 내
+  최신 의존성으로 `uv.lock`을 갱신했다.
+- [x] uv 0.13.1과 SHA 고정 setup-uv 10.3.0으로 Docker·CI 실행 환경을 갱신했다.
+- [x] 재발급으로 폐기된 OAuth token도 조회 요청에서 한 번 갱신하며, 주문 쓰기의 자동
+  재시도 금지와 뒤늦은 401 응답이 새 token을 지우지 않는 동작을 유지했다.
+- [x] 두 MCP 프로토콜에서 ISO 날짜 입력과 숫자·불리언의 엄격한 타입 검증을 회귀 검사했다.
+
+검증: pytest 163개, Ruff, mypy strict, 문서·Skill·OpenAPI 검사, dependency audit,
+wheel·source build, 기본·거래 Compose 구성 검사와 Python 3.12.15 기반 Docker E2E를 통과했다.
+
 ## 2026-10-02 — 의존성과 실행 도구 업데이트
 
 - [x] mypy 2.4.0, Ruff 0.16.10과 지원 범위 내 최신 하위 의존성으로 `uv.lock`을 갱신했다.
@@ -93,9 +109,9 @@ wheel·source build, 기본·거래 Compose 검증과 가짜 API를 사용하는
 - Ruff check 및 format 통과
 - mypy strict 통과
 - 알려진 Python dependency 취약점 없음
-- OpenAPI v1.2.19, 36 operations fingerprint 일치
-- 기본 모드 28개 도구와 쓰기 도구 0개 확인
-- 거래 모드 34개 도구와 쓰기 도구 3개 확인
+- OpenAPI v1.2.24, 41 operations fingerprint 일치
+- 기본 모드 33개 도구와 쓰기 도구 0개 확인
+- 거래 모드 39개 도구와 쓰기 도구 3개 확인
 - 기본·거래 Compose 구성 검증
 - production Docker image build 및 `/healthz` 실행 확인
 - `v0.1.2` GitHub Release와 amd64/arm64 GHCR 이미지 게시
