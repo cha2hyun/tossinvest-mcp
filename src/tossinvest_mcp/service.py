@@ -46,6 +46,7 @@ RankingDuration = Literal["realtime", "1d", "1w", "1mo", "3mo", "6mo", "1y"]
 SectorRankingType = Literal["TOP_GAINERS", "MARKET_TRADING_AMOUNT"]
 SectorRankingDuration = Literal["1d", "1w", "1mo", "3mo", "6mo", "1y"]
 SECTOR_ID_PATTERN = r"^[A-Za-z0-9_-]{1,40}$"
+ORDER_ID_PATTERN = r"^[A-Za-z0-9_~.-]{0,255}[A-Za-z0-9_~-][A-Za-z0-9_~.-]{0,255}$"
 MarketIndicator = Literal[
     "KOSPI",
     "KOSDAQ",
@@ -104,7 +105,7 @@ class TossInvestService:
     async def get_stock_warnings(self, symbol: str) -> dict[str, Any]:
         return await self.client.request(
             "GET",
-            f"/api/v1/stocks/{symbol}/warnings",
+            f"/api/v1/stocks/{self._validated_stock_symbol_path(symbol)}/warnings",
             group="STOCK",
         )
 
@@ -157,7 +158,7 @@ class TossInvestService:
     ) -> dict[str, Any]:
         return await self.client.request(
             "GET",
-            f"/api/v1/stocks/{symbol}/{endpoint}",
+            f"/api/v1/stocks/{self._validated_stock_symbol_path(symbol)}/{endpoint}",
             group="STOCK_TRADING_TREND",
             params={"count": count, "until": until},
         )
@@ -403,7 +404,7 @@ class TossInvestService:
     async def get_order(self, order_id: str) -> dict[str, Any]:
         return await self.client.request(
             "GET",
-            f"/api/v1/orders/{order_id}",
+            f"/api/v1/orders/{self._validated_order_id(order_id)}",
             group="ORDER_HISTORY",
             account_required=True,
         )
@@ -431,7 +432,7 @@ class TossInvestService:
     async def get_conditional_order(self, conditional_order_id: str) -> dict[str, Any]:
         return await self.client.request(
             "GET",
-            f"/api/v1/conditional-orders/{conditional_order_id}",
+            f"/api/v1/conditional-orders/{self._validated_order_id(conditional_order_id)}",
             group="CONDITIONAL_ORDER_HISTORY",
             account_required=True,
         )
@@ -659,7 +660,7 @@ class TossInvestService:
                 preview_id,
                 expected_kind="modify",
             )
-            order_id = str(preview.payload["order_id"])
+            order_id = self._validated_order_id(str(preview.payload["order_id"]))
             body = cast(dict[str, Any], preview.payload["body"])
             operation = await self.client.request(
                 "POST",
@@ -707,7 +708,7 @@ class TossInvestService:
                 preview_id,
                 expected_kind="cancel",
             )
-            order_id = str(preview.payload["order_id"])
+            order_id = self._validated_order_id(str(preview.payload["order_id"]))
             operation = await self.client.request(
                 "POST",
                 f"/api/v1/orders/{order_id}/cancel",
@@ -967,6 +968,21 @@ class TossInvestService:
                 code=f"order-not-{operation}able",
                 data={"status": status},
             )
+
+    @staticmethod
+    def _validated_order_id(order_id: str) -> str:
+        if len(order_id) > 256 or re.fullmatch(ORDER_ID_PATTERN, order_id) is None:
+            raise TossInvestError(
+                "Order IDs must be 1 to 256 URL-safe characters and cannot be dot segments",
+                code="invalid-order-id",
+            )
+        return order_id
+
+    @staticmethod
+    def _validated_stock_symbol_path(symbol: str) -> str:
+        if symbol in {".", ".."} or re.fullmatch(r"[A-Za-z0-9.\-]+", symbol) is None:
+            raise TossInvestError("Invalid stock symbol path", code="invalid-symbol")
+        return symbol
 
     @staticmethod
     def _validated_sector_id(sector_id: str) -> str:

@@ -30,8 +30,13 @@ kernel compromise, arbitrary process inspection, or code execution inside the se
   sequence values.
 - The MCP client sends credentials as private `X-Tossinvest-*` request headers.
 - Request headers are not MCP tool arguments, resources, prompts, or schemas.
-- Authentication contexts, OAuth tokens, rate limits, clients, and previews are isolated by a
-  one-way credential fingerprint and expire from memory.
+- OAuth tokens, refresh locks, and rate limits are shared only when the upstream base URL,
+  client ID, and client secret match. The lookup uses a one-way credential fingerprint.
+- Account selection, order limits, approval hashes, HTTP clients, and previews remain isolated
+  per tenant configuration. Authentication state is removed when no cached tenant or pending
+  admission refers to it.
+- New tenants authenticate before replacing cached contexts. Concurrent admissions are bounded
+  by `MCP_TENANT_CACHE_SIZE`; active requests and unexpired, unused previews prevent eviction.
 - Credential and account fields are redacted from normalized upstream responses and errors.
 - The original human approval token remains outside both server and MCP client configuration. Only
   its SHA-256 digest is sent in trading-mode headers.
@@ -43,6 +48,12 @@ capture, or process-inspection access to this credential boundary.
 
 - Public plain HTTP is forbidden. The application returns `426 https-required` unless the peer and
   requested host are both loopback.
+- The supplied Compose file explicitly sets `MCP_TRUST_LOOPBACK_PUBLISH=true` to support local
+  connections arriving through a Docker gateway. This exception requires both
+  `MCP_PUBLISHED_HOST` and the requested host to be loopback, and trusts Docker to enforce the
+  configured loopback host-port binding. It does not verify that binding itself. Keep this option
+  disabled for direct execution or any deployment that cannot guarantee that binding; the default
+  outside the supplied Compose file is `false`. A public `MCP_PUBLISHED_HOST` disables the exception.
 - Public deployments must terminate TLS at a trusted reverse proxy and preserve the original
   request scheme for Uvicorn.
 - Put only trusted reverse-proxy addresses in `MCP_TRUSTED_PROXY_IPS`; never trust forwarded
@@ -52,6 +63,23 @@ capture, or process-inspection access to this credential boundary.
 - Uvicorn access logs are disabled by default.
 - Responses use `Cache-Control: no-store`; HTTPS responses use HSTS.
 - Restrict `/healthz`, `/readyz`, and `/approvals/*` externally.
+
+## Outbound TLS trust
+
+The October 2026 [eMudhra CA incident](https://emudhra.we-have-a-problem.com/) affects both
+direct emSign chains and AAA cross-signed chains. The lockfile uses patched certifi, CI uses
+uv 0.13.5, and the Docker image requires Debian's fixed CA bundle and pip 26.2.2 or later.
+FastMCP 4 uses system trust, so upgrading certifi alone does not repair every TLS client.
+
+Rebuild existing images with `docker compose build --pull --no-cache` and recreate containers
+after reviewing the new image. An existing running container keeps its previous trust stores.
+For direct host execution, also update the operating system trust store and every installer or
+custom CA bundle in use. Do not disable certificate verification or assume a network timeout
+proves that a compromised certificate is rejected.
+
+Verify both incident test chains fail with a certificate verification error in the actual runtime,
+while ordinary HTTPS requests to `https://openapi.tossinvest.com` still complete TLS successfully.
+The incident page provides test hosts and offline certificate chains.
 
 ## Order invariants
 

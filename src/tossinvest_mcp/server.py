@@ -38,6 +38,7 @@ from tossinvest_mcp.models import (
 )
 from tossinvest_mcp.rate_limit import ApprovalAttemptLimiter
 from tossinvest_mcp.service import (
+    ORDER_ID_PATTERN,
     SECTOR_ID_PATTERN,
     MarketIndicator,
     RankingDuration,
@@ -82,11 +83,21 @@ SectorId = Annotated[
 ]
 OrderId = Annotated[
     str,
-    Field(min_length=1, max_length=256, description="Toss Securities order ID."),
+    Field(
+        min_length=1,
+        max_length=256,
+        pattern=ORDER_ID_PATTERN,
+        description="Toss Securities order ID, used as one URL-safe path segment.",
+    ),
 ]
 ConditionalOrderId = Annotated[
     str,
-    Field(min_length=1, max_length=256, description="Toss Securities conditional-order ID."),
+    Field(
+        min_length=1,
+        max_length=256,
+        pattern=ORDER_ID_PATTERN,
+        description="Toss Securities conditional-order ID, used as one URL-safe path segment.",
+    ),
 ]
 PreviewId = Annotated[
     str,
@@ -172,7 +183,7 @@ class OriginValidationMiddleware:
 class TransportSecurityMiddleware:
     """Require HTTPS except for requests addressed directly over loopback."""
 
-    def __init__(self, app: ASGIApp, allow_loopback_http: bool = True) -> None:
+    def __init__(self, app: ASGIApp, allow_loopback_http: bool = False) -> None:
         self.app = app
         self.allow_loopback_http = allow_loopback_http
 
@@ -1251,7 +1262,10 @@ def create_http_app(settings: Settings) -> ASGIApp:
     middleware = [
         Middleware(
             TransportSecurityMiddleware,
-            allow_loopback_http=ip_address(settings.mcp_published_host).is_loopback,
+            allow_loopback_http=(
+                settings.mcp_trust_loopback_publish
+                and ip_address(settings.mcp_published_host).is_loopback
+            ),
         ),
         Middleware(
             OriginValidationMiddleware,

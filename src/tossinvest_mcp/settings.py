@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     mcp_host: str = "0.0.0.0"  # noqa: S104 - container listens on all interfaces
     mcp_port: int = Field(default=8000, ge=1, le=65535)
     mcp_published_host: str = "127.0.0.1"
+    mcp_trust_loopback_publish: bool = False
     mcp_tenant_cache_size: int = Field(default=100, ge=1, le=10000)
     mcp_tenant_cache_ttl: int = Field(default=3600, ge=120, le=86400)
     mcp_trusted_proxy_ips: str = Field(default="127.0.0.1", min_length=1)
@@ -227,6 +228,7 @@ class Settings(BaseSettings):
             mcp_host=runtime.mcp_host,
             mcp_port=runtime.mcp_port,
             mcp_published_host=runtime.mcp_published_host,
+            mcp_trust_loopback_publish=runtime.mcp_trust_loopback_publish,
             mcp_tenant_cache_size=runtime.mcp_tenant_cache_size,
             mcp_tenant_cache_ttl=runtime.mcp_tenant_cache_ttl,
             mcp_trusted_proxy_ips=runtime.mcp_trusted_proxy_ips,

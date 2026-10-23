@@ -25,7 +25,8 @@ TossInvest MCP는 토스증권 Open API의 기능을 AI 에이전트가 호출�
 - Toss API 키와 계좌 sequence는 MCP 서버의 `.env`나 컨테이너 환경에 저장하지 않습니다.
 - 자격 증명은 MCP 클라이언트가 요청 헤더로 전달하고 서버는 요청별 인증 컨텍스트를 만듭니다.
 - 자격 증명 헤더는 MCP 도구 schema와 도구 인자에 나타나지 않습니다.
-- 요청별 OAuth token, HTTP client, 주문 preview는 자격 증명 fingerprint별로 격리됩니다.
+- 같은 API 주소·client ID·secret은 OAuth token과 호출 제한을 공유합니다. 계좌 선택·주문 한도·
+  승인 정보·HTTP client·주문 preview는 요청 설정별로 격리됩니다.
 - 공개 주소의 평문 HTTP 요청은 `426 https-required`로 거부합니다.
 - 평문 HTTP는 loopback으로 게시한 로컬 서버와 내부 healthcheck에서만 허용합니다.
 - MCP 응답은 `Cache-Control: no-store`이며 HTTPS 응답에는 HSTS를 추가합니다.
@@ -95,6 +96,7 @@ TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.2 docker compose up -d --no
 | --- | --- | --- |
 | `MCP_PUBLISHED_HOST` | `127.0.0.1` | Compose가 호스트에 바인딩할 주소 |
 | `MCP_PUBLISHED_PORT` | `8000` | Compose가 공개할 포트 |
+| `MCP_TRUST_LOOPBACK_PUBLISH` | `false` (기본 Compose는 `true`) | Docker의 loopback 포트 바인딩을 신뢰하는 HTTP 예외 |
 | `MCP_TENANT_CACHE_SIZE` | `100` | 메모리에 유지할 요청별 인증 컨텍스트 최대 수 |
 | `MCP_TENANT_CACHE_TTL` | `3600` | 사용하지 않은 인증 컨텍스트 보존 시간(초) |
 | `MCP_TRUSTED_PROXY_IPS` | `127.0.0.1` | forwarded scheme을 신뢰할 reverse proxy IP 목록 |
@@ -106,6 +108,13 @@ TOSSINVEST_IMAGE=ghcr.io/cha2hyun/tossinvest-mcp:0.1.2 docker compose up -d --no
 
 직접 실행할 때만 `MCP_HOST`와 `MCP_PORT`를 사용할 수 있습니다. 이 두 값은 Compose 내부에서
 각각 `0.0.0.0`, `8000`으로 고정됩니다.
+
+직접 실행할 때는 `MCP_TRUST_LOOPBACK_PUBLISH=false`를 유지하세요. HTTP 요청은 실제 접속
+IP와 요청 Host가 모두 loopback일 때만 허용됩니다. 기본 Compose는 Docker가 포트를
+`MCP_PUBLISHED_HOST`에 바인딩하는 것을 신뢰하므로 이 값을 `true`로 설정합니다.
+이 예외는 공개 주소가 loopback이고 요청 Host도 loopback일 때만 적용되어, Docker gateway
+IP로 전달되는 로컬 연결을 지원합니다. 다른 실행 환경에서 이 설정을 켜면 Host를 위조한
+외부 HTTP 요청도 허용할 수 있으므로 직접 실행이나 공개 포트 배포에서는 켜지 마세요.
 
 `/mcp` 요청이 `403 {"error":"origin-not-allowed"}`로 실패하면 브라우저나 웹뷰 기반
 클라이언트가 보낸 `Origin`이 허용되지 않은 것입니다. 해당 클라이언트의 정확한 origin을
@@ -313,13 +322,20 @@ proxy 운영자가 책임져야 합니다.
 
 ## 개발과 검증
 
-현재 소스는 FastMCP 4.1.1과 MCP Python SDK 2.3을 사용하며, 기존 handshake 방식과
+개발 및 빌드 도구는 `uv >= 0.13.5`를 사용하세요. 의존성 보안 검사는 `uv.lock`의 런타임·개발
+버전 전체를 검사합니다. 인증서 보안 업데이트를 기존 배포에 적용하는 방법은
+[TLS 신뢰 저장소 안내](SECURITY.md#outbound-tls-trust)를 확인하세요.
+
+현재 소스는 FastMCP 4.1.3과 MCP Python SDK 2.3을 사용하며, 기존 handshake 방식과
 `2026-07-28` 프로토콜의 sessionless 연결을 모두 검증합니다. 새 프로토콜에서는 MCP `ping`
 대신 `/healthz` 또는 도구 목록 조회로 연결 상태를 확인하세요.
 
-사용 중인 인증 컨텍스트는 캐시 만료·용량 정리로 닫히지 않습니다. 캐시가 모두 사용 중이면
-새 자격 증명의 요청은 `tenant-capacity-exceeded`로 거부되며, 진행 중인 요청이 끝난 뒤 다시
-시도할 수 있습니다. 주문 전송 뒤 서버 오류, 통신 오류 또는 주문 ID가 없는 응답은
+새 인증 컨텍스트는 OAuth 확인에 성공한 뒤 캐시에 들어가므로 잘못된 자격 증명이 기존
+컨텍스트를 밀어내지 않습니다. 동시 인증 대기 수는 `MCP_TENANT_CACHE_SIZE` 이내로 제한합니다.
+진행 중인 요청이나 아직 사용하지 않은 유효한 주문 preview가 있는 컨텍스트는 정리하지 않습니다.
+캐시를 교체할 수 없거나 인증 대기가 가득 차면 `tenant-capacity-exceeded`로 거부하며,
+요청 완료 또는 preview 사용·만료 후 다시 시도할 수 있습니다.
+주문 전송 뒤 서버 오류, 통신 오류 또는 주문 ID가 없는 응답은
 `order-state-unknown`으로 처리합니다. 이 경우 주문을 반복하지 말고 주문 내역을 확인하세요.
 
 ```bash
@@ -328,7 +344,7 @@ uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src scripts tests
-uv run pip-audit --strict .
+./scripts/audit_dependencies.sh
 uv run python scripts/check_docs.py
 uv run python scripts/validate_skills.py
 uv run python scripts/update_openapi.py --check

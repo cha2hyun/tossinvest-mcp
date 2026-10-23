@@ -8,14 +8,14 @@ import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from anyio import CancelScope
 from fastmcp.server.dependencies import get_http_headers
 from pydantic import ValidationError
 
-from tossinvest_mcp.client import TossInvestClient
+from tossinvest_mcp.client import ClientAuthState, TossInvestClient
 from tossinvest_mcp.errors import TossInvestError
 from tossinvest_mcp.previews import Preview
 from tossinvest_mcp.service import TossInvestService
@@ -35,8 +35,21 @@ TENANT_HEADER_NAMES = {
 @dataclass
 class _TenantEntry:
     service: TossInvestService
+    auth_key: str
     last_used: float
     active_requests: int = 0
+
+
+@dataclass
+class _AuthEntry:
+    state: ClientAuthState
+    users: int = 0
+
+
+@dataclass
+class _PendingAdmission:
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    error: TossInvestError | None = None
 
 
 class TenantServiceRegistry:
@@ -46,6 +59,8 @@ class TenantServiceRegistry:
         self.runtime = runtime
         self._clock = clock
         self._entries: OrderedDict[str, _TenantEntry] = OrderedDict()
+        self._auth_entries: dict[str, _AuthEntry] = {}
+        self._pending: dict[str, _PendingAdmission] = {}
         self._preview_owners: dict[str, tuple[str, Preview]] = {}
         self._service_keys: dict[int, str] = {}
         self._fingerprint_key = secrets.token_bytes(32)
@@ -82,27 +97,84 @@ class TenantServiceRegistry:
             ) from exc
 
         key = self._fingerprint(tenant_settings)
-        async with self._lock:
-            self._ensure_open()
-            await self._purge_locked()
-            entry = self._entries.pop(key, None)
-            if entry is None:
-                await self._make_room_locked()
-                client = TossInvestClient(tenant_settings)
-                entry = _TenantEntry(
-                    service=TossInvestService(tenant_settings, client),
-                    last_used=self._clock(),
-                )
-                self._service_keys[id(entry.service)] = key
-            else:
-                entry.last_used = self._clock()
-            entry.active_requests += 1
-            self._entries[key] = entry
+        entry = await self._acquire(key, tenant_settings)
         try:
             yield entry.service
         finally:
             with CancelScope(shield=True):
                 await self._release(key, entry)
+
+    async def _acquire(self, key: str, settings: Settings) -> _TenantEntry:
+        while True:
+            async with self._lock:
+                self._ensure_open()
+                await self._purge_locked()
+                entry = self._entries.get(key)
+                if entry is not None:
+                    entry.last_used = self._clock()
+                    entry.active_requests += 1
+                    self._entries.move_to_end(key)
+                    return entry
+
+                pending = self._pending.get(key)
+                if pending is None:
+                    if len(self._pending) >= self.runtime.mcp_tenant_cache_size:
+                        raise self._capacity_error()
+                    if len(self._entries) >= self.runtime.mcp_tenant_cache_size and not any(
+                        self._can_remove(entry_key, cached)
+                        for entry_key, cached in self._entries.items()
+                    ):
+                        raise self._capacity_error()
+                    pending = _PendingAdmission()
+                    self._pending[key] = pending
+                    auth_key = self._auth_fingerprint(settings)
+                    auth_entry = self._auth_entries.get(auth_key)
+                    if auth_entry is None:
+                        auth_entry = _AuthEntry(ClientAuthState())
+                        self._auth_entries[auth_key] = auth_entry
+                    auth_entry.users += 1
+                    break
+            # One caller authenticates this exact tenant. Other callers reuse
+            # its result without creating more clients or holding the cache lock.
+            await pending.ready.wait()
+            if pending.error is not None:
+                raise _copy_error(pending.error)
+
+        client: TossInvestClient | None = None
+        admitted = False
+        try:
+            client = TossInvestClient(settings, auth_state=auth_entry.state)
+            await client.authenticate()
+            async with self._lock:
+                self._ensure_open()
+                await self._purge_locked()
+                await self._make_room_locked()
+                entry = _TenantEntry(
+                    service=TossInvestService(settings, client),
+                    auth_key=auth_key,
+                    last_used=self._clock(),
+                    active_requests=1,
+                )
+                self._entries[key] = entry
+                self._service_keys[id(entry.service)] = key
+                admitted = True
+                return entry
+        except TossInvestError as exc:
+            pending.error = _copy_error(exc)
+            raise
+        except Exception:
+            pending.error = TossInvestError(
+                "Credential verification could not be completed", code="credentials-unavailable"
+            )
+            raise
+        finally:
+            with CancelScope(shield=True):
+                async with self._lock:
+                    self._pending.pop(key).ready.set()
+                    if not admitted:
+                        self._release_auth_locked(auth_key)
+                if client is not None and not admitted:
+                    await client.aclose()
 
     async def register_preview(
         self,
@@ -146,7 +218,10 @@ class TenantServiceRegistry:
             entries = [self._entries.pop(key) for key in idle_keys]
             for entry in entries:
                 self._service_keys.pop(id(entry.service), None)
+                self._release_auth_locked(entry.auth_key)
             self._preview_owners.clear()
+            for pending in self._pending.values():
+                pending.ready.set()
         await asyncio.gather(
             *(entry.service.client.aclose() for entry in entries),
             return_exceptions=True,
@@ -158,7 +233,7 @@ class TenantServiceRegistry:
         expired = [
             key
             for key, entry in self._entries.items()
-            if not entry.active_requests and entry.last_used <= cutoff
+            if self._can_remove(key, entry) and entry.last_used <= cutoff
         ]
         for key in expired:
             await self._remove_locked(key)
@@ -167,11 +242,20 @@ class TenantServiceRegistry:
         if len(self._entries) < self.runtime.mcp_tenant_cache_size:
             return
         for key, entry in self._entries.items():
-            if not entry.active_requests:
+            if self._can_remove(key, entry):
                 await self._remove_locked(key)
                 return
-        raise TossInvestError(
-            "All credential contexts are busy; try again after an active request finishes",
+        raise self._capacity_error()
+
+    def _can_remove(self, key: str, entry: _TenantEntry) -> bool:
+        return not entry.active_requests and not any(
+            owner_key == key for owner_key, _ in self._preview_owners.values()
+        )
+
+    @staticmethod
+    def _capacity_error() -> TossInvestError:
+        return TossInvestError(
+            "Credential contexts are busy or have pending approvals; try again later",
             status_code=503,
             code="tenant-capacity-exceeded",
         )
@@ -201,12 +285,30 @@ class TenantServiceRegistry:
         if entry is None:
             return
         self._service_keys.pop(id(entry.service), None)
+        self._release_auth_locked(entry.auth_key)
         self._preview_owners = {
             preview_id: owner
             for preview_id, owner in self._preview_owners.items()
             if owner[0] != key
         }
         await entry.service.client.aclose()
+
+    def _release_auth_locked(self, key: str) -> None:
+        entry = self._auth_entries[key]
+        entry.users -= 1
+        if not entry.users:
+            del self._auth_entries[key]
+
+    def _auth_fingerprint(self, settings: Settings) -> str:
+        assert settings.tossinvest_client_id is not None
+        assert settings.tossinvest_client_secret is not None
+        return self._fingerprint_fields(
+            (
+                settings.tossinvest_base_url.rstrip("/"),
+                settings.tossinvest_client_id,
+                settings.tossinvest_client_secret.get_secret_value(),
+            )
+        )
 
     def _fingerprint(self, settings: Settings) -> str:
         assert settings.tossinvest_client_id is not None
@@ -224,9 +326,12 @@ class TenantServiceRegistry:
                 else ""
             ),
         )
+        return self._fingerprint_fields(fields)
+
+    def _fingerprint_fields(self, fields: tuple[str, ...]) -> str:
         digest = hmac.new(self._fingerprint_key, digestmod=hashlib.sha256)
-        for field in fields:
-            encoded = field.encode()
+        for value in fields:
+            encoded = value.encode()
             digest.update(len(encoded).to_bytes(4, "big"))
             digest.update(encoded)
         return digest.hexdigest()
@@ -234,3 +339,14 @@ class TenantServiceRegistry:
 
 def _decimal_text(value: Decimal | None) -> str:
     return "" if value is None else str(value)
+
+
+def _copy_error(error: TossInvestError) -> TossInvestError:
+    # Share only the normalized error fields, not another request's traceback.
+    return TossInvestError(
+        str(error),
+        status_code=error.status_code,
+        code=error.code,
+        request_id=error.request_id,
+        data=error.data,
+    )

@@ -18,7 +18,8 @@ tool arguments or schemas.
 - Responses use `Cache-Control: no-store`; HTTPS responses also use HSTS.
 - Uvicorn access logging is disabled by default.
 - Credential and account fields are redacted from upstream responses and errors.
-- OAuth tokens, HTTP clients, rate limits, and previews are isolated per request credential set.
+- Matching upstream base URL, client ID, and secret share OAuth tokens and rate limits. Account
+  selection, order limits, approval settings, HTTP clients, and previews stay isolated per tenant.
 - Writes require an expiring preview, separate human approval, and immediate revalidation.
 - Writes are single-use and are never retried automatically.
 
@@ -155,8 +156,11 @@ The current source uses FastMCP 4.1.1 and MCP Python SDK 2.3. Tests cover both l
 connections and the `2026-07-28` sessionless protocol. For the latter, use `/healthz` or list tools
 to check connectivity; MCP `ping` is only available on legacy connections.
 
-Active credential contexts are protected from cache eviction. When every context is busy, a new
-credential set receives `tenant-capacity-exceeded` and can try again after an active request finishes.
+New contexts authenticate before entering the cache, so invalid credentials cannot evict existing
+contexts. Concurrent admissions are limited to `MCP_TENANT_CACHE_SIZE`. Active requests and
+unexpired, unused previews protect their contexts from eviction. When the cache has no replaceable
+context or admissions are full, new contexts receive `tenant-capacity-exceeded`; retry after a
+request finishes or a preview is used or expires.
 Server errors, transport failures, and missing order IDs after order dispatch return
 `order-state-unknown`. Inspect order history before taking further action; do not repeat the write.
 

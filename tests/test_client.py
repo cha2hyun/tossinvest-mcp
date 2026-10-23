@@ -10,7 +10,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
-from tossinvest_mcp.client import TossInvestClient
+from tossinvest_mcp.client import ClientAuthState, TossInvestClient
 from tossinvest_mcp.errors import OrderStateUnknownError, TossInvestError
 from tossinvest_mcp.rate_limit import RateLimiter
 from tossinvest_mcp.settings import Settings
@@ -455,9 +455,11 @@ async def test_repeated_token_rejection_stops_after_one_read_refresh(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error_code", ["expired-token", "token-revoked"])
+@pytest.mark.parametrize("separate_clients", [False, True])
 async def test_late_401_does_not_discard_a_newer_token(
     settings: Settings,
     error_code: str,
+    separate_clients: bool,
 ) -> None:
     token_calls = 0
     expired_requests = 0
@@ -485,10 +487,16 @@ async def test_late_401_does_not_discard_a_newer_token(
         return httpx.Response(200, json={"result": {"ok": True}})
 
     async with make_http_client(handler) as http:
-        client = TossInvestClient(settings, http_client=http, rate_limiter=NoopRateLimiter())
+        auth = ClientAuthState(rate_limiter=NoopRateLimiter())
+        client = TossInvestClient(settings, http_client=http, auth_state=auth)
+        other = (
+            TossInvestClient(settings, http_client=http, auth_state=auth)
+            if separate_clients
+            else client
+        )
         await asyncio.wait_for(
             asyncio.gather(
-                client.request("GET", "/api/v1/prices", group="MARKET_DATA"),
+                other.request("GET", "/api/v1/prices", group="MARKET_DATA"),
                 client.request("GET", "/api/v1/prices", group="MARKET_DATA"),
             ),
             timeout=2,

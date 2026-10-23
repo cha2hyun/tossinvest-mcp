@@ -16,6 +16,9 @@ class StubClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
+    async def authenticate(self) -> None:
+        return None
+
     async def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         self.calls.append({"method": method, "path": path, **kwargs})
         if path == "/api/v1/stocks":

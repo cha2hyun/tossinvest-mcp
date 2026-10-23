@@ -5,7 +5,7 @@ import math
 import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
@@ -42,8 +42,17 @@ class TossInvestClientLike(Protocol):
 
 @dataclass
 class _Token:
-    value: str
+    value: str = field(repr=False)
     refresh_at: float
+
+
+@dataclass(repr=False)
+class ClientAuthState:
+    """OAuth and rate-limit state shared only by clients with the same credentials."""
+
+    rate_limiter: RateLimiter = field(default_factory=RateLimiter)
+    token: _Token | None = None
+    token_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class TossInvestClient:
@@ -55,6 +64,7 @@ class TossInvestClient:
         *,
         http_client: httpx.AsyncClient | None = None,
         rate_limiter: RateLimiter | None = None,
+        auth_state: ClientAuthState | None = None,
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
@@ -63,15 +73,16 @@ class TossInvestClient:
         self.settings = settings
         self._clock = clock
         self._sleep = sleep
-        self._rate_limiter = rate_limiter or RateLimiter()
+        if auth_state is not None and rate_limiter is not None:
+            raise ValueError("A shared auth state already supplies its rate limiter")
+        self._auth = auth_state or ClientAuthState(rate_limiter=rate_limiter or RateLimiter())
+        self._rate_limiter = self._auth.rate_limiter
         self._http = http_client or httpx.AsyncClient(
             base_url=settings.tossinvest_base_url.rstrip("/"),
             timeout=httpx.Timeout(settings.tossinvest_request_timeout),
             headers={"User-Agent": f"tossinvest-mcp/{__version__}"},
         )
         self._owns_http_client = http_client is None
-        self._token: _Token | None = None
-        self._token_lock = asyncio.Lock()
         self._resolved_account_seq: str | None = settings.tossinvest_account_seq
         self._account_lock = asyncio.Lock()
 
@@ -81,20 +92,24 @@ class TossInvestClient:
 
     async def is_ready(self) -> bool:
         try:
-            await self._get_access_token()
+            await self.authenticate()
         except (httpx.HTTPError, TossInvestError):
             return False
         return True
 
+    async def authenticate(self) -> None:
+        """Validate credentials before admitting a new tenant into the service cache."""
+        await self._get_access_token()
+
     async def _get_access_token(self) -> str:
         now = self._clock()
-        if self._token is not None and now < self._token.refresh_at:
-            return self._token.value
+        if self._auth.token is not None and now < self._auth.token.refresh_at:
+            return self._auth.token.value
 
-        async with self._token_lock:
+        async with self._auth.token_lock:
             now = self._clock()
-            if self._token is not None and now < self._token.refresh_at:
-                return self._token.value
+            if self._auth.token is not None and now < self._auth.token.refresh_at:
+                return self._auth.token.value
 
             await self._rate_limiter.acquire("AUTH")
             assert self.settings.tossinvest_client_id is not None
@@ -140,7 +155,7 @@ class TossInvestClient:
                 ) from exc
 
             refresh_margin = min(60, max(1, expires_in // 10))
-            self._token = _Token(token, self._clock() + max(1, expires_in - refresh_margin))
+            self._auth.token = _Token(token, self._clock() + max(1, expires_in - refresh_margin))
             return token
 
     async def request(
@@ -209,8 +224,8 @@ class TossInvestClient:
                 and isinstance(error_code, str)
                 and error_code in {"expired-token", "token-revoked"}
             ):
-                if self._token is not None and self._token.value == token:
-                    self._token = None
+                if self._auth.token is not None and self._auth.token.value == token:
+                    self._auth.token = None
                 if not retryable or refreshed_after_401 or attempt >= max_attempts:
                     raise self._error_from_response(response, payload, request_token=token)
                 refreshed_after_401 = True
@@ -362,7 +377,7 @@ class TossInvestClient:
         return (
             self.settings.tossinvest_client_id,
             self.settings.tossinvest_client_secret.get_secret_value(),
-            self._token.value if self._token is not None else "",
+            self._auth.token.value if self._auth.token is not None else "",
         )
 
     @staticmethod

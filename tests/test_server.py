@@ -18,6 +18,7 @@ from tossinvest_mcp.server import (
     OriginValidationMiddleware,
     TransportSecurityMiddleware,
     build_argument_parser,
+    create_http_app,
     create_mcp,
     load_server_settings,
 )
@@ -395,7 +396,7 @@ async def test_request_scoped_trading_uses_tenant_approval_hash(
         "x-tossinvest-approval-token-sha256": hashlib.sha256(APPROVAL_TOKEN.encode()).hexdigest(),
     }
     monkeypatch.setattr(tenants_module, "get_http_headers", lambda **_: headers)
-    monkeypatch.setattr(tenants_module, "TossInvestClient", lambda _: StubClient())
+    monkeypatch.setattr(tenants_module, "TossInvestClient", lambda _, **__: StubClient())
 
     mcp, registry = create_mcp(runtime)
     assert isinstance(registry, TenantServiceRegistry)
@@ -627,19 +628,38 @@ async def test_public_http_is_rejected_and_https_gets_security_headers(
 
 
 @pytest.mark.asyncio
-async def test_loopback_http_remains_available(runtime_settings: Settings) -> None:
-    mcp, _ = create_mcp(runtime_settings)
-    app = mcp.http_app(
-        path="/mcp",
-        stateless_http=True,
-        middleware=[Middleware(TransportSecurityMiddleware)],
+@pytest.mark.parametrize(
+    ("peer", "host", "trust_publish", "published_host", "expected_status"),
+    [
+        ("203.0.113.10", "127.0.0.1", False, "127.0.0.1", 426),
+        ("172.17.0.1", "127.0.0.1", False, "127.0.0.1", 426),
+        ("127.0.0.1", "127.0.0.1", False, "127.0.0.1", 200),
+        ("::1", "localhost", False, "127.0.0.1", 200),
+        ("172.17.0.1", "127.0.0.1", True, "127.0.0.1", 200),
+        ("172.17.0.1", "mcp.example", True, "127.0.0.1", 426),
+        ("203.0.113.10", "127.0.0.1", True, "0.0.0.0", 426),  # noqa: S104 - test public binding
+    ],
+)
+async def test_plain_http_requires_loopback_peer_or_explicit_container_publish_trust(
+    runtime_settings: Settings,
+    peer: str,
+    host: str,
+    trust_publish: bool,
+    published_host: str,
+    expected_status: int,
+) -> None:
+    values: dict[str, Any] = runtime_settings.model_dump()
+    values.update(
+        mcp_trust_loopback_publish=trust_publish,
+        mcp_published_host=published_host,
     )
-    transport = httpx.ASGITransport(app=app, client=("172.17.0.1", 1234))
+    app = create_http_app(Settings(**values))
+    transport = httpx.ASGITransport(app=app, client=(peer, 1234))
 
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://{host}") as client:
         response = await client.get("/healthz")
 
-    assert response.status_code == 200
+    assert response.status_code == expected_status
 
 
 def test_trading_settings_require_limits(settings: Settings) -> None:

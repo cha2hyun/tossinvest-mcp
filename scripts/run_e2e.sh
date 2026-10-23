@@ -18,7 +18,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-docker build --tag "$TOSSINVEST_E2E_IMAGE" .
+docker build --pull --tag "$TOSSINVEST_E2E_IMAGE" .
 "${compose[@]}" up \
   --abort-on-container-exit \
   --exit-code-from e2e-runner \
