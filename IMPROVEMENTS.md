@@ -3,6 +3,17 @@
 이 문서는 보안 감사와 에이전트 사용성 검토에서 확인한 보완사항을 추적한다.
 아래 항목은 2026-06-19 기준으로 완료했고, 이후 릴리즈와 소스 보강 내용을 반영했다.
 
+## 2026-10-28 — 의존성과 실행 도구 업데이트
+
+- [x] FastMCP 4.1.4, Starlette 1.10.0, pytest 9.2.0, pytest-asyncio 1.4.1,
+  Ruff 0.17.3과 지원 범위 내 하위 의존성으로 `uv.lock`을 갱신했다.
+- [x] uv 0.13.6의 Docker digest와 docker/login-action 4.7.0의 commit SHA를 고정했다.
+- [x] 테스트 fixture의 이벤트 루프 범위를 함수 단위로 명시했다.
+- [x] Toss OpenAPI v1.2.24의 41개 operation과 REST 계약은 유지하고 문서 해시를 갱신했다.
+
+검증: pytest 211개, Ruff, mypy strict, 문서·Skill·OpenAPI 검사, dependency audit,
+wheel·source build와 Python 3.12.16 기반 Docker E2E를 통과했다.
+
 ## 2026-10-18 — 섹터 API와 MCP 업데이트
 
 - [x] Toss OpenAPI v1.2.24의 41개 operation에 맞춰 섹터 목록·상세·구성 주식·관련 ETF·랭킹

@@ -326,7 +326,7 @@ proxy 운영자가 책임져야 합니다.
 버전 전체를 검사합니다. 인증서 보안 업데이트를 기존 배포에 적용하는 방법은
 [TLS 신뢰 저장소 안내](SECURITY.md#outbound-tls-trust)를 확인하세요.
 
-현재 소스는 FastMCP 4.1.3과 MCP Python SDK 2.3을 사용하며, 기존 handshake 방식과
+현재 소스는 FastMCP 4.1.4와 MCP Python SDK 2.3을 사용하며, 기존 handshake 방식과
 `2026-07-28` 프로토콜의 sessionless 연결을 모두 검증합니다. 새 프로토콜에서는 MCP `ping`
 대신 `/healthz` 또는 도구 목록 조회로 연결 상태를 확인하세요.
 

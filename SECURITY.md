@@ -68,7 +68,7 @@ capture, or process-inspection access to this credential boundary.
 
 The October 2026 [eMudhra CA incident](https://emudhra.we-have-a-problem.com/) affects both
 direct emSign chains and AAA cross-signed chains. The lockfile uses patched certifi, CI uses
-uv 0.13.5, and the Docker image requires Debian's fixed CA bundle and pip 26.2.2 or later.
+uv 0.13.6, and the Docker image requires Debian's fixed CA bundle and pip 26.2.2 or later.
 FastMCP 4 uses system trust, so upgrading certifi alone does not repair every TLS client.
 
 Rebuild existing images with `docker compose build --pull --no-cache` and recreate containers

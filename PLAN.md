@@ -7,13 +7,13 @@
 
 ## 현재 구현
 
-- Python 3.12, FastMCP 4.1.1, MCP Python SDK 2.3, httpx, Pydantic과 uv 기반 Streamable HTTP 서버
+- Python 3.12, FastMCP 4.1.4, MCP Python SDK 2.3, httpx, Pydantic과 uv 기반 Streamable HTTP 서버
 - 토스증권 Open API v1.2.24의 전체 조회 operation
 - 국내·미국 섹터 목록, 상세, 구성 주식, 관련 ETF와 랭킹 조회
 - OAuth2 client-credentials 발급, 메모리 캐시와 동시 갱신 방지
 - 서버 환경에 Toss 비밀값을 두지 않는 요청 헤더 기반 인증 컨텍스트
-- 자격 증명 HMAC fingerprint별 OAuth client, token, rate limit과 preview 격리
-- 사용 중인 인증 컨텍스트의 캐시 정리 방지와 요청 취소·종료 시 연결 반환
+- 같은 API 주소·client ID·secret의 OAuth token과 rate limit 공유 및 요청 설정별 preview 격리
+- 인증 후 캐시 등록, 사용 중인 컨텍스트와 유효한 preview 보호 및 요청 취소·종료 시 연결 반환
 - 계좌 헤더 주입과 MCP 응답의 계좌 식별 정보 제거
 - API 그룹별 rate limit과 조회 요청에 한정된 안전한 재시도
 - 기본 조회 전용 실행과 명시적 `--dangerously-enable-trading` 거래 활성화
