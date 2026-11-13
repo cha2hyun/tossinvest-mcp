@@ -71,6 +71,10 @@
     "kind": "tool",
     "tools": ["get_rankings"]
   },
+  "getInvestorTradingRankings": {
+    "kind": "unsupported",
+    "reason": "Investor trading rankings do not yet have an MCP adapter with validated inputs and contract tests."
+  },
   "getMarketIndicatorPrices": {
     "kind": "tool",
     "tools": ["get_market_indicator_prices"]
@@ -110,6 +114,10 @@
   "getHoldings": {
     "kind": "tool",
     "tools": ["get_holdings"]
+  },
+  "getTransactions": {
+    "kind": "unsupported",
+    "reason": "Account transaction history does not yet have an MCP adapter with validated filters, pagination, and account-scoping tests."
   },
   "getOrders": {
     "kind": "tool",
