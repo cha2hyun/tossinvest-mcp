@@ -125,7 +125,16 @@ orders, for 39 tools in total. The official API's conditional-order create, modi
 operations are intentionally not exposed because they do not yet have the same preview, separate
 human approval, and immediate revalidation safeguards.
 
+The official investor trading rankings (`getInvestorTradingRankings`) and account transaction
+history (`getTransactions`) endpoints are not yet exposed as MCP tools. Their adapters still need
+input validation and contract tests before support is added. The [operation map](openapi/tool-map.json)
+records these limitations explicitly; official specification drift checks remain enabled.
+
 ## Trading
+
+The current adapter supports `DAY` and `CLS` for US limit orders; the official API's `OPG` is not
+supported. Quantity-based orders accept whole shares only. US market orders require the bounded
+`order_amount` form; fractional quantity-based orders are not exposed.
 
 Generate a separate human approval token and store its original outside both the MCP server and
 client. Put only its SHA-256 digest and conservative KRW/USD limits in the client secret store.
@@ -152,7 +161,7 @@ health and approval routes and add firewall, VPN, or gateway authentication.
 
 ## Verification
 
-The current source uses FastMCP 4.1.4 and MCP Python SDK 2.3. Tests cover both legacy handshake
+The current source uses FastMCP 4.1.5 and MCP Python SDK 2.3. Tests cover both legacy handshake
 connections and the `2026-07-28` sessionless protocol. For the latter, use `/healthz` or list tools
 to check connectivity; MCP `ping` is only available on legacy connections.
 
